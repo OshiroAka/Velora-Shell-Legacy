@@ -9,9 +9,9 @@ QtObject {
     readonly property string style: String(config.visualStyle || "classic")
     readonly property bool editorial: style === "editorial"
     readonly property bool minimal: style === "minimal"
-    readonly property bool characterPaletteActive: config.characterPywal && palette.ready
+    readonly property bool characterPaletteActive: config.characterPywal && !!palette && !!palette.ready
     readonly property bool wallpaperAccent: String(config.accentMode || "wallpaper")
-        === "wallpaper" && palette.ready
+        === "wallpaper" && !!palette && !!palette.ready
     readonly property bool manualPalette: String(config.accentMode || "wallpaper")
         === "custom"
     readonly property string effectivePywalTone: {
@@ -36,12 +36,12 @@ QtObject {
     readonly property real darkSurfaceLevel: Math.max(0.025,
         Math.min(0.11, 0.068 / contrastLevel))
 
-    property color accent: wallpaperAccent ? palette.accent
-        : (manualPalette ? config.customColor("accent") : config.accentColor)
+    property color accent: validColor(wallpaperAccent ? palette.accent
+        : (manualPalette ? config.customColor("accent") : config.accentColor))
     property color accentAlt: wallpaperAccent
-        ? palette.accentAlt : Qt.lighter(accent, 1.16)
+        ? validColor(palette.accentAlt) : Qt.lighter(accent, 1.16)
     property color accentSoft: wallpaperAccent
-        ? palette.accentSoft : Qt.lighter(accent, 1.24)
+        ? validColor(palette.accentSoft) : Qt.lighter(accent, 1.24)
     property color accentMuted: withAlpha(accent, light ? 0.20 : 0.34)
     property color textPrimary: wallpaperAccent
         ? paletteText(true) : (manualPalette
@@ -125,7 +125,7 @@ QtObject {
     property color mediaSurface: surfaceRaised
     property color mediaBorder: borderStrong
     property color visualizerStart: accent
-    property color visualizerMiddle: wallpaperAccent ? palette.accentAlt
+    property color visualizerMiddle: wallpaperAccent ? validColor(palette.accentAlt)
         : Qt.lighter(accent, 1.18)
     property color visualizerEnd: accentSoft
 
@@ -145,10 +145,22 @@ QtObject {
     Behavior on moduleBorder { ColorAnimation { duration: paletteTransitionDuration; easing.type: Easing.InOutCubic } }
 
     function withAlpha(source, alpha) {
+        source = validColor(source)
         return Qt.rgba(source.r, source.g, source.b, alpha)
     }
 
+    // Palette consumers can run before the first file load.
+    function validColor(source) {
+        if (source === undefined || source === null || source === "")
+            return Qt.rgba(0.068, 0.073, 0.09, 1)
+        if (typeof source === "string")
+            return Qt.color(source)
+        return source
+    }
+
     function mixColor(first, second, amount) {
+        first = validColor(first)
+        second = validColor(second)
         const t = Math.max(0, Math.min(1, Number(amount)))
         return Qt.rgba(first.r + (second.r - first.r) * t,
                        first.g + (second.g - first.g) * t,
@@ -156,12 +168,13 @@ QtObject {
     }
 
     function colorLuminance(source) {
+        source = validColor(source)
         return source.r * 0.2126 + source.g * 0.7152
             + source.b * 0.0722
     }
 
     function paletteSurface(lightTone) {
-        if (palette.exactSurface) return palette.background
+        if (palette.exactSurface) return validColor(palette.background)
         const raw = palette.background
         const target = lightTone ? Qt.rgba(0.965, 0.97, 0.98, 1)
                                  : Qt.rgba(0.018, 0.022, 0.03, 1)
@@ -177,7 +190,7 @@ QtObject {
     }
 
     function paletteText(primary) {
-        if (palette.exactSurface) return primary ? palette.foreground : palette.muted
+        if (palette.exactSurface) return validColor(primary ? palette.foreground : palette.muted)
         if (light) {
             const base = mixColor(Qt.rgba(0.045, 0.055, 0.075, 1),
                                   palette.background, primary ? 0.18 : 0.30)
