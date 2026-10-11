@@ -35,9 +35,10 @@ else:
     if result.returncode:
         raise SystemExit(result.stderr.strip() or "Velora Shell is not responding in this session")
     state = json.loads(result.stdout)
+    native = json.loads(subprocess.check_output(["python3", str(root / "scripts/native-blur"), "status"], env=env, text=True))
     if not state.get("ready") or state.get("configurationError") or state["compositionProfiles"].get("error"):
         raise SystemExit("Velora Shell reports an initialization error")
     print(json.dumps({"ready": state["ready"], "widgets": state["sharedWidgets"]["count"],
                       "profiles": state["compositionProfiles"]["count"],
                       "nativeVisualizer": state["visualizer"]["native"],
-                      "topbar": state["topbar"]["enabled"]}))
+                      "topbar": state["topbar"]["enabled"], "nativeBlur": native}))

@@ -1007,13 +1007,11 @@ Rectangle {
             SettingSlider {
                 width: parent.width
                 label: "Largura da barra"
-                hint: ui.theme && ui.theme.topBarEnabled ? "Disponível no modo de barra lateral" : "Redimensiona barra, relógio e área reservada"
+                hint: "Redimensiona barra, relógio e área reservada"
                 minimum: 88
                 maximum: 136
                 value: ui.theme ? ui.theme.barWidth : 112
                 valueText: Math.round(value) + "px"
-                opacity: ui.theme && ui.theme.topBarEnabled ? 0.42 : 1
-                enabled: !(ui.theme && ui.theme.topBarEnabled)
                 onValueRequested: function(newValue) { if (ui.theme) ui.theme.setBarWidth(newValue, false) }
                 onValueCommitted: function(newValue) { if (ui.theme) ui.theme.setBarWidth(newValue, true) }
             }
@@ -1079,72 +1077,6 @@ Rectangle {
 
             SettingSlider {
                 width: parent.width
-                visible: ui.theme && ui.theme.topBarEnabled
-                label: "Transparência da barra superior"
-                hint: value <= 0.01 ? "Sem faixa de fundo; os módulos continuam visíveis" : "Faixa adaptativa com transparência e blur"
-                minimum: 0
-                maximum: 1
-                value: ui.theme ? ui.theme.topBarOpacity : 0.18
-                valueText: Math.round(value * 100) + "%"
-                onValueRequested: function(newValue) { if (ui.theme) ui.theme.setTopBarOpacity(newValue) }
-            }
-
-            ToggleRow {
-                width: parent.width
-                visible: ui.theme && ui.theme.topBarEnabled
-                label: "Gradiente do fundo da barra"
-                hint: checked ? "Coloriza a faixa contínua atrás dos módulos" : "Faixa usa somente a cor base"
-                checked: ui.theme ? ui.theme.topBarGradientEnabled : true
-                onToggled: if (ui.theme) ui.theme.setTopBarGradientEnabled(!ui.theme.topBarGradientEnabled)
-            }
-
-            SettingSlider {
-                width: parent.width
-                visible: ui.theme && ui.theme.topBarEnabled && ui.theme.topBarGradientEnabled
-                label: "Força do fundo da barra"
-                hint: "Intensidade das cores pywal na faixa"
-                minimum: 0
-                maximum: 1
-                value: ui.theme ? ui.theme.topBarGradientStrength : 0.82
-                valueText: Math.round(value * 100) + "%"
-                onValueRequested: function(newValue) { if (ui.theme) ui.theme.setTopBarGradientStrength(newValue) }
-            }
-
-            ToggleRow {
-                width: parent.width
-                visible: ui.theme && ui.theme.topBarEnabled
-                label: "Gradiente dos balões da barra"
-                hint: checked ? "Um só campo pywal atravessa todos os módulos" : "Balões usam somente suas cores base"
-                checked: ui.theme ? ui.theme.topBarBubbleGradientEnabled : true
-                onToggled: if (ui.theme) ui.theme.setTopBarBubbleGradientEnabled(!ui.theme.topBarBubbleGradientEnabled)
-            }
-
-            SettingSlider {
-                width: parent.width
-                visible: ui.theme && ui.theme.topBarEnabled && ui.theme.topBarBubbleGradientEnabled
-                label: "Força dos balões"
-                hint: "Intensidade do campo contínuo nos módulos"
-                minimum: 0
-                maximum: 1
-                value: ui.theme ? ui.theme.topBarBubbleGradientStrength : 0.82
-                valueText: Math.round(value * 100) + "%"
-                onValueRequested: function(newValue) { if (ui.theme) ui.theme.setTopBarBubbleGradientStrength(newValue) }
-            }
-
-            SettingSlider {
-                width: parent.width
-                visible: ui.theme && ui.theme.topBarEnabled
-                label: "Espaçamento entre categorias"
-                hint: "Distância entre relógio, busca, áreas, mídia e utilitários"
-                minimum: 0
-                maximum: 248
-                value: ui.theme ? ui.theme.topBarCategoryGap : 8
-                valueText: Math.round(value) + "px"
-                onValueRequested: function(newValue) { if (ui.theme) ui.theme.setTopBarCategoryGap(Math.round(newValue)) }
-            }
-
-            SettingSlider {
-                width: parent.width
                 label: "Espaçamento entre ícones"
                 hint: "Distância vertical entre os ícones"
                 minimum: 8
@@ -1194,19 +1126,10 @@ Rectangle {
                     ChoiceButton {
                         width: 66
                         compact: true
-                        label: "Superior"
-                        active: ui.theme && ui.theme.topBarEnabled
-                        onClicked: if (ui.theme) ui.theme.setTopBarEnabled(true)
-                    }
-
-                    ChoiceButton {
-                        width: 66
-                        compact: true
                         label: "Esquerda"
-                        active: ui.theme && !ui.theme.topBarEnabled && ui.theme.barPosition === "left"
+                        active: ui.theme && ui.theme.barPosition === "left"
                         onClicked: {
                             if (ui.theme) {
-                                ui.theme.setTopBarEnabled(false)
                                 ui.theme.setBarPosition("left")
                             }
                         }
@@ -1216,10 +1139,9 @@ Rectangle {
                         width: 60
                         compact: true
                         label: "Direita"
-                        active: ui.theme && !ui.theme.topBarEnabled && ui.theme.barPosition === "right"
+                        active: ui.theme && ui.theme.barPosition === "right"
                         onClicked: {
                             if (ui.theme) {
-                                ui.theme.setTopBarEnabled(false)
                                 ui.theme.setBarPosition("right")
                             }
                         }
@@ -1501,22 +1423,18 @@ Rectangle {
                 width: parent.width
                 text: ui.theme && ui.theme.wallpaperSelectorPosition === "bottom"
                     ? "Usa o seletor antigo abaixo da moldura."
-                    : "Usa o carrossel amplo com desfoque no centro."
+                    : "Usa o accordion de wallpapers no centro."
                 color: ui.secondaryText
                 font.family: ui.uiFont
                 font.pixelSize: 10
                 wrapMode: Text.WordWrap
             }
 
-            SettingSlider {
+            ChoiceButton {
                 width: parent.width
-                label: "Desfoque do seletor"
-                hint: value <= 0.01 ? "Fundo totalmente limpo" : "Intensidade do vidro atrás dos wallpapers"
-                minimum: 0
-                maximum: 1
-                value: ui.theme ? ui.theme.wallpaperSelectorBlur : 0.55
-                valueText: Math.round(value * 100) + "%"
-                onValueRequested: function(newValue) { if (ui.theme) ui.theme.setWallpaperSelectorBlur(newValue) }
+                label: active ? "Vidro do seletor ligado" : "Vidro do seletor desligado"
+                active: !!ui.controller && ui.controller.composition.wallpaperSelectorGlassEnabled
+                onClicked: if (ui.controller) ui.controller.composition.setWallpaperSelectorGlass(!active)
             }
 
             Divider { width: parent.width }

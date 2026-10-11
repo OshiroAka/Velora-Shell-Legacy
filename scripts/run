@@ -10,7 +10,8 @@ if [[ -z "${VELORA_NOTIFICATION_SOUND:-}" && -f "$sound_file" ]]; then
     export VELORA_NOTIFICATION_SOUND
 fi
 build_dir=$("$project_dir/scripts/build")
-"$project_dir/scripts/load-native-blur" "$build_dir/hyprland/velora-blur.so" >/dev/null
+"$project_dir/scripts/load-native-blur" "$build_dir/hyprland/velora-blur.so" >/dev/null || \
+    printf '%s\n' 'Velora: efeitos nativos indisponíveis nesta sessão; iniciando com blur do compositor.' >&2
 export QML_IMPORT_PATH="$build_dir/visualizer/qml:$build_dir/spectrum/qml${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}"
 export QS_NO_RELOAD_POPUP=1
 export QSG_RENDER_LOOP=threaded

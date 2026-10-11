@@ -25,9 +25,11 @@
     },
     "characterPywal": false
   },
+  "desktop": {
+    "wallpaperSelectorGlassEnabled": true
+  },
   "topbar": {
     "enabled": true,
-    "variant": "velora",
     "systemName": "Velora Shell",
     "height": 40,
     "scale": 1,

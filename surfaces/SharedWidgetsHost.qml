@@ -1,4 +1,5 @@
 import QtQuick
+import "../platform" as Platform
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Wayland
@@ -26,6 +27,7 @@ Variants {
     required property var causticsClock
     required property int opticsGeneration
     property bool barOnRight: false
+    property bool nativeBarMaterial: false
     property int visualizerRailInset: 0
     property int visualizerCornerRadius: 0
     property int visualizerBottomInset: 0
@@ -111,7 +113,7 @@ Variants {
                 && root.config.waterCausticsEnabled
                 && root.config.waterCausticsLines
                 && root.config.waterCausticsModules
-            Hyprland.dispatch("velora-blur:shared-widgets-shape 1 "
+            Platform.NativeBlur.dispatch("velora-blur:shared-widgets-shape 1 "
                 + (caustics ? "1 " : "0 ") + shapes.join(" "))
         }
 
@@ -142,7 +144,7 @@ Variants {
 
         Component.onCompleted: scheduleNativeShapeResync()
         Component.onDestruction:
-            Hyprland.dispatch("velora-blur:shared-widgets-shape 0")
+            Platform.NativeBlur.dispatch("velora-blur:shared-widgets-shape 0")
 
         Region {
             id: individualBlurRegion
@@ -181,6 +183,16 @@ Variants {
             Region { item: sharedScene.systemHitItem; intersection: Intersection.Combine }
         }
 
+        // A covered pixel keeps the desktop material host mapped even when
+        // all widgets are hidden. It is underneath the fixed sidebar/frame.
+        Rectangle {
+            x: root.barOnRight ? parent.width - 2 : 1
+            y: parent.height - 2
+            width: 1; height: 1
+            color: "#01000000"
+            visible: root.nativeBarMaterial
+        }
+
         Lock.AudioVisualizer {
             anchors.left: parent.left
             anchors.right: parent.right
@@ -193,13 +205,15 @@ Variants {
             clipCornerRadius: 0
             clipBottomInset: 0
             clipSideOnRight: root.barOnRight
-            visible: root.config.desktopVisualizerEnabled && root.visualizer.running && !root.preview.shown
+            visible: !root.nativeBarMaterial
+                && root.config.desktopVisualizerEnabled && root.visualizer.running && !root.preview.shown
                 && !(root.settings.shown && root.settings.mode === "editing")
             opacity: 0.78
         }
 
         Widgets.SharedWidgetsScene {
             id: sharedScene
+            barOnRight: root.barOnRight
             anchors.fill: parent
             config: root.config
             theme: root.theme

@@ -1,4 +1,5 @@
 import QtQuick
+import "../platform" as Platform
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Wayland
@@ -35,7 +36,7 @@ Variants {
         Connections {
             target: root.controller
             function onShownChanged() {
-                Hyprland.dispatch("velora-blur:transition "
+                Platform.NativeBlur.dispatch("velora-blur:transition "
                     + (root.controller.shown ? "open " + root.motion.widgetOpen
                        : "close " + root.motion.widgetExit))
             }
@@ -44,7 +45,7 @@ Variants {
         Connections {
             target: root
             function onOpticsGenerationChanged() {
-                Hyprland.dispatch("velora-blur:transition "
+                Platform.NativeBlur.dispatch("velora-blur:transition "
                     + (root.controller.shown
                        ? "open " + root.motion.widgetOpen : "reset"))
                 lockScene.queueProfileDialOptics()
@@ -98,7 +99,10 @@ Variants {
                 opacity: 0
             }
 
-            BackgroundEffect.blurRegion: Region {}
+            BackgroundEffect.blurRegion: Region {
+                item: !Platform.NativeBlur.supports("transition") ? desktopDialOpticalRegion : null
+                radius: Math.round(lockScene.profileDialHalfHeight * desktopBlurSurface.designScale)
+            }
         }
 
         PanelWindow {
@@ -146,7 +150,24 @@ Variants {
                 opacity: 0
             }
 
-            BackgroundEffect.blurRegion: Region {}
+            Item {
+                id: panelOpticalRegion
+                x: panelSurface.designOriginX + lockScene.mainPanelX * panelSurface.designScale
+                y: panelSurface.designOriginY + (103 + (1 - lockScene.opticsReveal) * 50) * panelSurface.designScale
+                width: 1277 * panelSurface.designScale
+                height: 610 * panelSurface.designScale
+                visible: root.controller.mounted && !root.theme.editorial
+                opacity: 0
+            }
+            BackgroundEffect.blurRegion: Region {
+                item: !Platform.NativeBlur.supports("transition") ? panelOpticalRegion : null
+                radius: Math.round(root.theme.panelRadius * panelSurface.designScale)
+                Region {
+                    item: !Platform.NativeBlur.supports("dial") ? panelDialOpticalRegion : null
+                    radius: Math.round(lockScene.profileDialHalfHeight * panelSurface.designScale)
+                    intersection: Intersection.Combine
+                }
+            }
 
             Item {
                 id: panelInputRegion

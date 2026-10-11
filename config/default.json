@@ -31,7 +31,8 @@
     "visualizerEnabled": true,
     "wallpaperBlurEnabled": false,
     "wallpaperBlurStrength": 0.35,
-    "wallpaperDimming": 0
+    "wallpaperDimming": 0,
+    "wallpaperSelectorGlassEnabled": true
   },
   "bar": {
     "material": "glass",
@@ -45,7 +46,6 @@
     "oneThingEnabled": true,
     "notesEnabled": true,
     "toolsOrder": ["caffeine", "timer", "thing", "notes", "battery", "paint", "monitor", "search", "controls", "clock"],
-    "variant": "velora",
     "systemName": "Velora Shell",
     "height": 40,
     "scale": 1,

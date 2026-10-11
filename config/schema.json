@@ -14,6 +14,7 @@
         "widgetsEnabled": {"type": "boolean"},
         "visualizerEnabled": {"type": "boolean"},
         "wallpaperBlurEnabled": {"type": "boolean"},
+        "wallpaperSelectorGlassEnabled": {"type": "boolean"},
         "wallpaperBlurStrength": {"type": "number", "minimum": 0, "maximum": 1},
         "wallpaperDimming": {"type": "number", "minimum": 0, "maximum": 1}
       }
@@ -74,7 +75,6 @@
           "type": "array", "uniqueItems": true, "maxItems": 9,
           "items": {"enum": ["caffeine", "timer", "thing", "notes", "battery", "paint", "monitor", "search", "controls", "clock"]}
         },
-        "variant": {"enum": ["velora", "end4-first"]},
         "systemName": {"type": "string", "minLength": 1, "maxLength": 80},
         "height": {"type": "number", "minimum": 36, "maximum": 52},
         "scale": {"type": "number", "minimum": 0.75, "maximum": 1.35},

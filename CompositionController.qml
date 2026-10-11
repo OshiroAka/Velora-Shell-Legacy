@@ -16,8 +16,12 @@ Scope {
     readonly property bool referenceAppearance: config.referenceAppearance
     readonly property bool connectedNotifications: config.topbarEnabled && config.referenceAppearance
     readonly property real barHeight: 40
+    readonly property bool reducedMotion: config.reducedMotion
+    readonly property var motionTokens: motion
     readonly property string barMaterial: config.barMaterial
     readonly property bool barBlurEnabled: config.barBlurEnabled
+    readonly property bool wallpaperSelectorGlassEnabled: config.wallpaperSelectorGlassEnabled
+    function setWallpaperSelectorGlass(enabled) { config.setValue("desktop.wallpaperSelectorGlassEnabled", enabled) }
     readonly property real barWaveStrength: config.barWaveStrength
     readonly property color unifiedBarSurface: theme.barSurface
     readonly property color unifiedBarBorder: theme.borderSubtle
@@ -28,6 +32,15 @@ Scope {
     readonly property var forecastService: weather
     readonly property var mediaService: media
     readonly property var audioVisualizer: visualizer
+    readonly property bool desktopVisualizerVisible: config.desktopVisualizerEnabled
+        && visualizer.running && !preview.shown
+        && !(editorController.shown && editorController.mode === "editing")
+    readonly property bool nativeBarMaterial: Platform.NativeBlur.supportsBarMaterial(visualizer)
+    readonly property string nativeBarMaterialDiagnostic: Platform.NativeBlur.supports("desktop-bar-material") && !nativeBarMaterial
+        ? "Visualizador sem materialFrame; material compartilhado usa fallback. Reconstrua e reinicie o Velora para carregar o módulo atualizado." : ""
+    onNativeBarMaterialDiagnosticChanged: {
+        if (nativeBarMaterialDiagnostic) console.warn("Velora blur: " + nativeBarMaterialDiagnostic)
+    }
     readonly property var topbarTools: topbarSystem
     readonly property var networkStatus: systemStatus
     property bool sidebarNetworkActive: false
@@ -52,29 +65,36 @@ Scope {
 
     readonly property string version: "velora-shell-0.1"
     property int opticsGeneration: 0
+    Connections {
+        target: Platform.NativeBlur
+        function onRevisionChanged() {
+            root.opticsGeneration += 1
+            root.syncNativeAppearance()
+        }
+    }
 
     function syncNativeAppearance() {
         syncBarBlur()
-        Hyprland.dispatch("velora-blur:lock-layout "
+        Platform.NativeBlur.dispatch("velora-blur:lock-layout "
             + (theme.editorial ? "editorial" : "panel"))
-        Hyprland.dispatch("velora-blur:appearance commit "
+        Platform.NativeBlur.dispatch("velora-blur:appearance commit "
             + Number(config.blurStrength).toFixed(4) + " "
             + Number(config.appearanceContrast).toFixed(4) + " "
             + Number(config.reflectionStrength).toFixed(4))
     }
 
     function syncWallpaperEffects() {
-        Hyprland.dispatch("velora-blur:wallpaper " + Number(
+        Platform.NativeBlur.dispatch("velora-blur:wallpaper " + Number(
             config.wallpaperBlurEnabled ? config.wallpaperBlurStrength : 0).toFixed(4))
     }
     function syncLiquidStyle() {
-        Hyprland.dispatch("velora-blur:liquid-style " + config.liquidGlassStyle + " " + (theme.light ? "1" : "0"))
+        Platform.NativeBlur.dispatch("velora-blur:liquid-style " + config.liquidGlassStyle + " " + (theme.light ? "1" : "0"))
     }
     function syncBarBlur() {
         syncLiquidStyle()
         syncWallpaperEffects()
-        Hyprland.dispatch("velora-blur:bar-blur " + (config.barBlurEnabled ? "1" : "0"))
-        Hyprland.dispatch("velora-blur:widget-blur " + (config.widgetBlurEnabled ? "1" : "0"))
+        Platform.NativeBlur.dispatch("velora-blur:bar-blur " + (config.barBlurEnabled ? "1" : "0"))
+        Platform.NativeBlur.dispatch("velora-blur:widget-blur " + (config.widgetBlurEnabled ? "1" : "0"))
     }
 
     Core.ConfigStore { id: config }
@@ -99,7 +119,7 @@ Scope {
     }
     Platform.CompositorService { id: compositor }
     Services.ClockService { id: clock; localeName: config.localeName }
-    TopBarFeature.TopBarController { id: topbarController }
+    TopBarFeature.TopBarController { id: topbarController; motion: motion }
     Services.TopBarTimerService { id: topbarTimer }
     Services.FanPlusService { id: fanPlus }
     Connections {
@@ -174,6 +194,7 @@ Scope {
     }
 
     Surfaces.TopBarHost {
+        nativeBarMaterial: root.nativeBarMaterial
         notificationSource: root.shell
         executionStatus: executionStatus
         controller: topbarController
@@ -224,6 +245,7 @@ Scope {
     }
 
     Surfaces.SharedWidgetsHost {
+        nativeBarMaterial: root.nativeBarMaterial
         opticsGeneration: root.opticsGeneration
         barOnRight: root.shell ? root.shell.barOnRight : false
         visualizerRailInset: root.shell && root.shell.sideBarLayoutEnabled
@@ -312,6 +334,8 @@ Scope {
             version: version,
             ready: config.ready,
             configurationError: config.error,
+            nativeBlur: Platform.NativeBlur.state,
+            nativeBarMaterial: { available: root.nativeBarMaterial, diagnostic: root.nativeBarMaterialDiagnostic },
             preview: preview.status(),
             settings: editorController.status(),
             editor: editorController.status(),
@@ -328,6 +352,8 @@ Scope {
             },
             visualizer: {
                 running: visualizer.running,
+                desktopMaterial: root.nativeBarMaterial,
+                desktopVisible: root.desktopVisualizerVisible,
                 bands: visualizer.bandCount,
                 native: true
             },
@@ -343,7 +369,6 @@ Scope {
             },
             topbar: {
                 enabled: config.topbarEnabled,
-                variant: config.topbarVariant,
                 layoutCount: config.topbarLayout.length,
                 leftCount: config.topbarItemsForSection("left", false).length,
                 centerCount: config.topbarItemsForSection("center", false).length,
@@ -417,7 +442,10 @@ Scope {
             else
                 preview.toggle()
         }
+        function nativeBlurSuspend(): void { Platform.NativeBlur.suspend() }
+        function nativeBlurResume(): void { Platform.NativeBlur.resume() }
         function opticsResync(): void {
+            Platform.NativeBlur.refresh()
             root.opticsGeneration += 1
             root.syncNativeAppearance()
         }

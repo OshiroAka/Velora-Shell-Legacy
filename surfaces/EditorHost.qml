@@ -1,4 +1,5 @@
 import QtQuick
+import "../platform" as Platform
 import Quickshell
 import Quickshell.Wayland
 import Quickshell.Hyprland
@@ -39,7 +40,14 @@ Variants {
         WlrLayershell.keyboardFocus: root.controller.shown
             ? (editingDesktop ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive) : WlrKeyboardFocus.None
 
-        BackgroundEffect.blurRegion: Region {}
+        BackgroundEffect.blurRegion: Region {
+            Region { item: !Platform.NativeBlur.supports("editor-shape") && chrome.toolBarItem.visible ? chrome.toolBarItem : null; radius: 25 }
+            Region { item: !Platform.NativeBlur.supports("editor-shape") && chrome.layersItem.visible ? chrome.layersItem : null; radius: 26; intersection: Intersection.Combine }
+            Region { item: !Platform.NativeBlur.supports("editor-shape") && chrome.inspectorItem.visible ? chrome.inspectorItem : null; radius: 28; intersection: Intersection.Combine }
+            Region { item: !Platform.NativeBlur.supports("editor-shape") && chrome.catalogItem.visible ? chrome.catalogItem : null; radius: 28; intersection: Intersection.Combine }
+            Region { item: !Platform.NativeBlur.supports("editor-shape") && chrome.profilesItem.visible ? chrome.profilesItem : null; radius: 28; intersection: Intersection.Combine }
+            Region { item: !Platform.NativeBlur.supports("editor-shape") && chrome.barItem.visible ? chrome.barItem : null; radius: 28; intersection: Intersection.Combine }
+        }
 
         Item { id: topbarInputGap; width: editorWindow.width; height: 40 }
         mask: Region {
@@ -77,7 +85,7 @@ Variants {
                 if (item && item.visible && item.width > 1 && item.height > 1)
                     shapes.push(shapeFields(item))
             }
-            Hyprland.dispatch("velora-blur:editor-shape " + shapes.length
+            Platform.NativeBlur.dispatch("velora-blur:editor-shape " + shapes.length
                 + (shapes.length ? " " + shapes.join(" ") : ""))
         }
 
@@ -123,6 +131,7 @@ Variants {
             }
 
             Settings.SceneEditorOverlay {
+                barOnRight: root.controller.shell ? root.controller.shell.barOnRight : false
                 anchors.fill: parent
                 z: 1
                 active: root.controller.shown
@@ -221,6 +230,6 @@ Variants {
 
         Component.onCompleted: queueShape()
         Component.onDestruction:
-            Hyprland.dispatch("velora-blur:editor-shape 0")
+            Platform.NativeBlur.dispatch("velora-blur:editor-shape 0")
     }
 }

@@ -60,13 +60,7 @@ Item {
         { id: "lavender", title: "Lavender", subtitle: "Lilac glass", mode: "light", preview: "lavender" },
         { id: "pywal16", title: "pywal16", subtitle: "auto", mode: "dynamic", preview: "pywal16" }
     ]
-    readonly property var fallbackWallpapers: [
-        { kind: "static", label: "Tokyo Fuji", title: "Tokyo Fuji", category: "Paisagem", path: wallpaperDir + "/static/aerial-view-tokyo-cityscape-with-fuji-mountain-japan.jpg", preview: wallpaperDir + "/static/aerial-view-tokyo-cityscape-with-fuji-mountain-japan.jpg" },
-        { kind: "static", label: "Corredor vermelho", title: "Corredor vermelho", category: "Paisagem", path: wallpaperDir + "/WallpaperSelector/1238960-best-japan-wallpaper-4k-3840x2160-for-xiaomi.jpg", preview: wallpaperDir + "/WallpaperSelector/1238960-best-japan-wallpaper-4k-3840x2160-for-xiaomi.jpg" },
-        { kind: "static", label: "Entardecer calmo", title: "Entardecer calmo", category: "Paisagem", path: wallpaperDir + "/WallpaperSelector/1238973-japan-wallpaper-4k-3840x2160-for-mobile-hd.jpg", preview: wallpaperDir + "/WallpaperSelector/1238973-japan-wallpaper-4k-3840x2160-for-mobile-hd.jpg" },
-        { kind: "static", label: "Memória suave", title: "Memória suave", category: "Anime", path: wallpaperDir + "/WallpaperSelector/columbina-anime-3840x2160-26082.jpg", preview: wallpaperDir + "/WallpaperSelector/columbina-anime-3840x2160-26082.jpg" },
-        { kind: "static", label: "Flores suaves", title: "Flores suaves", category: "Paisagem", path: wallpaperDir + "/WallpaperSelector/1238954-widescreen-japan-wallpaper-4k-3840x2160-hd-1080p.jpg", preview: wallpaperDir + "/WallpaperSelector/1238954-widescreen-japan-wallpaper-4k-3840x2160-hd-1080p.jpg" }
-    ]
+    readonly property var fallbackWallpapers: []
     readonly property var worldClockOptions: [
         { label: "São Paulo", zone: "America/Sao_Paulo" },
         { label: "New York", zone: "America/New_York" },
@@ -483,11 +477,11 @@ Item {
     function currentWallpaper() {
         if (root.wallpapers.length > 0)
             return root.wallpapers[Math.max(0, Math.min(root.selectedIndex, root.wallpapers.length - 1))]
-        return root.fallbackWallpapers[0]
+        return (root.fallbackWallpapers[0] || ({}))
     }
 
     function currentWallpaperPath() {
-        return root.currentWallpaper().path
+        return root.currentWallpaper().path || ""
     }
 
     function currentWallpaperPreview() {
@@ -552,6 +546,8 @@ Item {
         if (applyWallpaper.running)
             return
         const item = root.currentWallpaper()
+        if (!item.path)
+            return
         applyWallpaper.command = [root.applyScript, item.kind || "static", item.path, root.displaySource(item), root.wallpaperTransition, root.wallpaperTransitionDuration.toFixed(2), root.wallpaperStaticDelay.toFixed(2), root.wallpaperLiveTransition]
         applyWallpaper.running = true
     }
@@ -1377,23 +1373,11 @@ Item {
 
                     LayoutPreviewButton {
                         width: 96
-                        side: "top"
-                        label: root.tr("layoutTop")
-                        active: root.theme ? root.theme.topBarEnabled : false
-                        onClicked: {
-                            if (root.theme)
-                                root.theme.setTopBarEnabled(true)
-                        }
-                    }
-
-                    LayoutPreviewButton {
-                        width: 96
                         side: "left"
                         label: root.tr("layoutLeft")
-                        active: root.theme ? !root.theme.topBarEnabled && root.theme.barPosition === "left" : true
+                        active: root.theme ? root.theme.barPosition === "left" : true
                         onClicked: {
                             if (root.theme) {
-                                root.theme.setTopBarEnabled(false)
                                 root.theme.setBarPosition("left")
                             }
                         }
@@ -1403,10 +1387,9 @@ Item {
                         width: 96
                         side: "right"
                         label: root.tr("layoutRight")
-                        active: root.theme ? !root.theme.topBarEnabled && root.theme.barPosition === "right" : false
+                        active: root.theme ? root.theme.barPosition === "right" : false
                         onClicked: {
                             if (root.theme) {
-                                root.theme.setTopBarEnabled(false)
                                 root.theme.setBarPosition("right")
                             }
                         }
@@ -2236,24 +2219,11 @@ Item {
                                 LayoutPreviewButton {
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 66
-                                    side: "top"
-                                    label: root.tr("layoutTop")
-                                    active: root.theme ? root.theme.topBarEnabled : false
-                                    onClicked: {
-                                        if (root.theme)
-                                            root.theme.setTopBarEnabled(true)
-                                    }
-                                }
-
-                                LayoutPreviewButton {
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 66
                                     side: "left"
                                     label: root.tr("layoutLeft")
-                                    active: root.theme ? !root.theme.topBarEnabled && root.theme.barPosition === "left" : true
+                                    active: root.theme ? root.theme.barPosition === "left" : true
                                     onClicked: {
                                         if (root.theme) {
-                                            root.theme.setTopBarEnabled(false)
                                             root.theme.setBarPosition("left")
                                         }
                                     }
@@ -2264,10 +2234,9 @@ Item {
                                     Layout.preferredHeight: 66
                                     side: "right"
                                     label: root.tr("layoutRight")
-                                    active: root.theme ? !root.theme.topBarEnabled && root.theme.barPosition === "right" : false
+                                    active: root.theme ? root.theme.barPosition === "right" : false
                                     onClicked: {
                                         if (root.theme) {
-                                            root.theme.setTopBarEnabled(false)
                                             root.theme.setBarPosition("right")
                                         }
                                     }
@@ -2771,7 +2740,7 @@ Item {
                                     maxValue: 136
                                     value: root.theme ? root.theme.barWidth : 112
                                     valueText: Math.round(displayValue) + " px"
-                                    disabled: root.theme ? root.theme.topBarEnabled : false
+                                    disabled: false
                                     onMoved: function(v) { if (root.theme) root.theme.setBarWidth(v, false) }
                                     onCommitted: function(v) { if (root.theme) root.theme.setBarWidth(v, true) }
                                 }
@@ -2781,7 +2750,7 @@ Item {
                                     Layout.preferredHeight: 38
                                     Layout.alignment: Qt.AlignBottom
                                     label: root.tr("reset")
-                                    enabled: root.theme ? !root.theme.topBarEnabled : true
+                                    enabled: true
                                     opacity: enabled ? 1 : 0.42
                                     onClicked: if (root.theme) root.theme.resetBarWidth()
                                 }

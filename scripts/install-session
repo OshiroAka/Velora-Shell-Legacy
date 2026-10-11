@@ -40,7 +40,11 @@ if not args.skip_hypr:
     directory.mkdir(parents=True, exist_ok=True)
     main = directory / "hyprland.conf"
     include = directory / "velora-hyprland.conf"
-    snippet = (root / "config/hyprland.conf.in").read_text().replace("@ROOT@", str(root))
+    rules = subprocess.run([sys.executable, str(root / "scripts/native-blur"), "rules",
+                            str(root / "config/hyprland.conf.in")], capture_output=True, text=True)
+    if rules.returncode:
+        raise SystemExit(rules.stderr.strip() + "\nConfiguração Hyprland preservada; use --skip-hypr ou instale os headers/binário corretos.")
+    snippet = rules.stdout.replace("@ROOT@", str(root))
     if not args.without_infinite_desktop:
         canvas = (root / "scripts/infinite-desktop.conf").read_text()
         canvas = re.sub(r'(?<=exec, )infinite-desktop\b', '"' + str(root / "scripts/infinite-desktop") + '"', canvas)

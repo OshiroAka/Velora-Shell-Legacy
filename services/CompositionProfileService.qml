@@ -77,8 +77,7 @@ Scope {
             normalized.appearance = ({})
         if (!normalized.topbar || typeof normalized.topbar !== "object")
             normalized.topbar = ({})
-        if (normalized.topbar.variant === undefined)
-            normalized.topbar.variant = "velora"
+        delete normalized.topbar.variant
         normalized.topbarLayout = root.config.normalizedTopbarLayout(
             normalized.topbarLayout)
         if (normalized.appearance.lockDimmingMode === undefined)

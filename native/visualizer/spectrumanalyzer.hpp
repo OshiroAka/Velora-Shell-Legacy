@@ -29,6 +29,7 @@ public:
     [[nodiscard]] int bandCount() const noexcept;
     [[nodiscard]] bool hasSignal() const noexcept;
     [[nodiscard]] std::vector<float> values() const;
+    Q_INVOKABLE QString materialFrame() const;
 
 signals:
     void activeChanged();

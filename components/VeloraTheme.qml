@@ -56,7 +56,6 @@ QtObject {
     readonly property var motionEmphasizedCurve: [0.05, 0, 0.133, 0.06, 0.166, 0.4, 0.208, 0.82, 0.25, 1, 1, 1]
     property string barPosition: "left"
     property bool desktopFrameEnabled: true
-    property bool topBarEnabled: false
     property bool topBarFrameLineEnabled: true
     property real topBarOpacity: 0.18
     property bool topBarGradientEnabled: true
@@ -1687,31 +1686,11 @@ QtObject {
         }
     }
 
-    function setTopBarEnabled(enabled, persist) {
-        const nextEnabled = truthyEnabled(enabled)
-        topBarEnabled = nextEnabled
-        if (nextEnabled)
-            desktopFrameEnabled = false
-        if (persist !== false) {
-            saveTopBarEnabled()
-            if (nextEnabled)
-                saveLayout()
-        }
-    }
 
-    function toggleTopBarEnabled() {
-        setTopBarEnabled(!topBarEnabled)
-    }
 
-    function saveTopBarEnabled() {
-        const enabled = topBarEnabled ? "on" : "off"
-        if (topBarSaveProc.running)
-            topBarSaveProc.pending = enabled
-        else {
-            topBarSaveProc.command = [root.stateScript, "topbar", "set", enabled]
-            topBarSaveProc.running = true
-        }
-    }
+
+
+
 
     function setTopBarFrameLineEnabled(enabled, persist) {
         topBarFrameLineEnabled = truthyEnabled(enabled)
@@ -2323,9 +2302,6 @@ QtObject {
                 false
             )
         }
-
-        if (key === "topBar")
-            root.setTopBarEnabled(line === "on" || line === "1" || line === "true", false)
 
         if (key === "topBarFrameLine")
             root.setTopBarFrameLineEnabled(line !== "off" && line !== "0" && line !== "false", false)

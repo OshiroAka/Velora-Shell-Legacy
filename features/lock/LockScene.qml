@@ -1,4 +1,5 @@
 import QtQuick
+import "../../platform" as Platform
 import QtQuick.Effects
 import Quickshell.Hyprland
 
@@ -80,7 +81,7 @@ Item {
 
     function syncWaterCaustics() {
         const enabled = waterCausticsVisible ? 1 : 0
-        Hyprland.dispatch("velora-blur:caustics state " + enabled + " "
+        Platform.NativeBlur.dispatch("velora-blur:caustics state " + enabled + " "
             + Math.max(0, Math.min(1,
                 config.waterCausticsIntensity)).toFixed(4) + " "
             + (config.waterCausticsLines ? "1" : "0") + " "
@@ -89,7 +90,7 @@ Item {
     }
 
     function resetWaterCaustics() {
-        Hyprland.dispatch("velora-blur:caustics reset")
+        Platform.NativeBlur.dispatch("velora-blur:caustics reset")
     }
 
     function queueProfileDialOptics() {
@@ -98,7 +99,7 @@ Item {
 
     function syncProfileDialOptics() {
         const active = root.presented && root.profileDialVisible
-        Hyprland.dispatch("velora-blur:dial " + (active ? "1" : "0")
+        Platform.NativeBlur.dispatch("velora-blur:dial " + (active ? "1" : "0")
             + " " + root.profileDialDepth.toFixed(3)
             + " " + root.profileDialHalfHeight.toFixed(3)
             + " " + root.profileDialCenterY.toFixed(3))
@@ -167,7 +168,7 @@ Item {
         syncWaterCaustics()
     }
     Component.onDestruction: {
-        Hyprland.dispatch("velora-blur:dial 0 0 0 408")
+        Platform.NativeBlur.dispatch("velora-blur:dial 0 0 0 408")
         resetWaterCaustics()
     }
 

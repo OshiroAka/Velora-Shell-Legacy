@@ -13,7 +13,7 @@ Scope {
     readonly property string configPath: configDir + "/config.json"
 
     property bool ready: false
-    readonly property bool referenceAppearance: valueAt(userData, "appearance.stylePreset", "reference") === "reference"
+    readonly property bool referenceAppearance: true
     property string error: ""
     property string saveError: ""
     property bool savePending: false
@@ -56,8 +56,8 @@ Scope {
     property bool wallpaperBlurEnabled: false
     property real wallpaperBlurStrength: 0.35
     property real wallpaperDimming: 0
+    property bool wallpaperSelectorGlassEnabled: true
     property bool widgetBlurEnabled: true
-    property string topbarVariant: "velora"
     property string systemName: "Velora Shell"
     property real topbarHeight: 40
     property real topbarScale: 1
@@ -425,10 +425,6 @@ Scope {
         lockDimmingAmount = limitedNumber(
             resolved, "lockPreview.dimming.amount", 0.28, 0, 0.72)
         topbarEnabled = Boolean(valueAt(resolved, "topbar.enabled", true))
-        const requestedTopbarVariant = String(valueAt(
-            resolved, "topbar.variant", "velora"))
-        topbarVariant = ["velora", "end4-first"].includes(requestedTopbarVariant)
-            ? requestedTopbarVariant : "velora"
         systemName = String(valueAt(resolved, "topbar.systemName", "Velora Shell"))
         const requestedTopbarLayout = valueAt(
             resolved, "topbar.layout", defaultTopbarLayout())
@@ -451,6 +447,7 @@ Scope {
         wallpaperBlurEnabled = Boolean(valueAt(resolved, "desktop.wallpaperBlurEnabled", false))
         wallpaperBlurStrength = limitedNumber(resolved, "desktop.wallpaperBlurStrength", 0.35, 0, 1)
         wallpaperDimming = limitedNumber(resolved, "desktop.wallpaperDimming", 0, 0, 1)
+        wallpaperSelectorGlassEnabled = Boolean(valueAt(resolved, "desktop.wallpaperSelectorGlassEnabled", true))
         widgetBlurEnabled = Boolean(valueAt(resolved, "lockPreview.sharedWidgets.blurEnabled", true))
         barBlurEnabled = Boolean(valueAt(resolved, "bar.blurEnabled", true))
         const requestedBarMaterial = String(valueAt(
@@ -1364,7 +1361,6 @@ Scope {
             calendar: { reminders: clone(calendarReminders) },
             topbarLayout: clone(topbarLayout),
             topbar: {
-                variant: topbarVariant,
                 toolsOrder: clone(topbarToolsOrder),
                 height: topbarHeight,
                 scale: topbarScale,
@@ -1548,10 +1544,6 @@ Scope {
         if (snapshotVersion >= 7 && isObject(snapshot.topbar)) {
             if (Array.isArray(snapshot.topbar.toolsOrder))
                 next = setAt(next, "topbar.toolsOrder", TopBarOrder.normalize(snapshot.topbar.toolsOrder))
-            const requestedVariant = String(snapshot.topbar.variant || "velora")
-            next = setAt(next, "topbar.variant",
-                ["velora", "end4-first"].includes(requestedVariant)
-                    ? requestedVariant : "velora")
             const metric = function(value, fallback, minimum, maximum) {
                 const parsed = Number(value)
                 return isFinite(parsed) ? Math.max(minimum,
@@ -1689,10 +1681,7 @@ Scope {
             return isFinite(parsed) ? Math.max(minimum,
                 Math.min(maximum, parsed)) : fallback
         }
-        const requestedVariant = String(source.variant || topbarVariant)
-        next = setAt(next, "topbar.variant",
-            ["velora", "end4-first"].includes(requestedVariant)
-                ? requestedVariant : "velora")
+        if (isObject(next.topbar)) delete next.topbar.variant
         next = setAt(next, "topbar.height", metric(
             source.height, topbarHeight, 36, 52))
         next = setAt(next, "topbar.scale", metric(
@@ -1940,7 +1929,6 @@ Scope {
                      widgetSurfaceMode)
         next = setAt(next, "lockPreview.calendar.reminders", calendarReminders)
         next = setAt(next, "topbar.layout", topbarLayout)
-        next = setAt(next, "topbar.variant", topbarVariant)
         next = setAt(next, "topbar.height", topbarHeight)
         next = setAt(next, "topbar.scale", topbarScale)
         next = setAt(next, "topbar.gap", topbarGap)

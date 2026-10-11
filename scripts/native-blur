@@ -1,0 +1,320 @@
+#!/usr/bin/env python3
+"""Build and verify the optional Hyprland effect without loading stale ABIs."""
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+
+ROOT = Path(__file__).resolve().parents[1]
+CAPABILITIES = ["desktop-bar-material", "transition", "dial", "caustics", "topbar-connected", "bar-blur",
+                "widget-blur", "liquid-style", "wallpaper", "topbar-shape",
+                "unified-bar-shape", "topbar-settle", "right-menu-shape",
+                "settings-shape", "editor-shape", "selector-shape", "appearance",
+                "lock-layout", "shared-widgets-shape"]
+
+
+def run(command, *, timeout=10, **kwargs):
+    return subprocess.run(command, capture_output=True, text=True,
+                          timeout=timeout, check=True, **kwargs).stdout.strip()
+
+
+def digest(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def error_detail(error):
+    return "\n".join(str(part) for part in (getattr(error, "stdout", None),
+        getattr(error, "stderr", None)) if part) or str(error)
+
+
+def compile_command(command):
+    try:
+        completed = subprocess.run(command, check=True, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True)
+        print(completed.stdout, file=sys.stderr, end="")
+    except subprocess.CalledProcessError as error:
+        print(error_detail(error), file=sys.stderr)
+        raise
+
+
+def read_json(path):
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def write_json(path, value):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as out:
+        json.dump(value, out, sort_keys=True)
+        temporary = Path(out.name)
+    temporary.replace(path)
+
+
+def version(text):
+    match = re.search(r"(?:v)?(\d+)\.(\d+)\.(\d+)", str(text))
+    return tuple(map(int, match.groups())) if match else None
+
+
+def running_version():
+    try:
+        data = json.loads(run(["hyprctl", "-j", "version"]))
+        if isinstance(data, dict) and data.get("commit"):
+            return data
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    # Older hyprctl releases have no JSON version or abiHash field.
+    text = run(["hyprctl", "version"])
+    commit = re.search(r"\bcommit\s+([0-9a-f]{7,40})", text)
+    abi = re.search(r"Version ABI string:\s*(\S+)", text)
+    tag = re.search(r"(?:Hyprland\s+|Tag:\s*v?)(\d+\.\d+\.\d+)", text)
+    if not commit:
+        raise RuntimeError("Não foi possível identificar o Hyprland em execução.")
+    return {"commit": commit[1], "version": tag[1] if tag else "",
+            "abiHash": abi[1] if abi else commit[1]}
+
+
+def header_identity():
+    pkg_version = run(["pkg-config", "--modversion", "hyprland"])
+    flags = shlex.split(run(["pkg-config", "--cflags", "hyprland"]))
+    compiler = shlex.split(os.environ.get("CXX", "c++"))
+    include_dirs = [Path(flag[2:]) for flag in flags if flag.startswith("-I")]
+    include_dirs += [Path("/usr/include")]
+    headers = {}
+    for relative in ("hyprland/src/version.h", "hyprland/src/plugins/PluginAPI.hpp"):
+        path = next((p / relative for p in include_dirs if (p / relative).is_file()), None)
+        if path is None:
+            # Some distributions export -I<prefix>/include/hyprland only.
+            path = next((p / relative.removeprefix("hyprland/") for p in include_dirs
+                         if (p / relative.removeprefix("hyprland/")).is_file()), None)
+        if path is None:
+            raise RuntimeError("Headers Hyprland incompletos: " + relative)
+        headers[str(path)] = digest(path)
+        if relative == "hyprland/src/plugins/PluginAPI.hpp":
+            flags.append("-I" + str(path.parents[3]))
+    identity = {"headersVersion": pkg_version, "flags": flags, "headers": headers,
+                "compiler": run(compiler + ["--version"]).splitlines()[0]}
+    # Preprocess the real API function so dependency version macros participate
+    # in invalidation. Linking the entire header would require compositor-only
+    # globals; compile just its expanded hash function in the probe instead.
+    expanded = run(compiler + flags + ["-std=c++23", "-E", "-P", "-x", "c++", "-"],
+                   input='#include <hyprland/src/plugins/PluginAPI.hpp>\n', timeout=60)
+    start = re.search(r"__hyprland_api_get_client_hash\(\)\s*\{", expanded)
+    if not start:
+        raise RuntimeError("Os headers não expõem o hash ABI do plugin.")
+    depth, end = 1, start.end()
+    while depth and end < len(expanded):
+        depth += (expanded[end] == "{") - (expanded[end] == "}")
+        end += 1
+    body = expanded[start.end() - 1:end]
+    identity["hashFunction"] = hashlib.sha256(body.encode()).hexdigest()
+    key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    # Ask the installed headers for their actual client hash. Do not infer ABI
+    # from a release number or duplicate Hyprland's evolving hash algorithm.
+    cache = cache_dir() / "headers" / (key + ".json")
+    saved = read_json(cache)
+    if saved.get("headerKey") == key and saved.get("abi"):
+        return saved
+    with tempfile.TemporaryDirectory(prefix="velora-abi-") as temporary:
+        probe = Path(temporary) / "probe"
+        run(compiler + flags + ["-std=c++23", "-x", "c++", "-", "-o", str(probe)],
+            input='#include <string>\n#include <string_view>\n#include <iostream>\n'
+                  'const char* __hyprland_api_get_client_hash() ' + body + '\n'
+                  'int main(){std::cout << __hyprland_api_get_client_hash();}\n', timeout=60)
+        identity.update(abi=run([str(probe)]), headerKey=key)
+    write_json(cache, identity)
+    return identity
+
+
+def cache_dir():
+    return Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "velora-shell/native"
+
+
+def abi_matches(identity, running):
+    expected = running.get("abiHash") or running.get("commit")
+    return bool(expected and identity.get("abi") == expected)
+
+
+def build(directory, jobs):
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / "build.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return build_locked(directory, jobs)
+
+
+def build_locked(directory, jobs):
+    plugin = directory / "velora-blur.so"
+    manifest = directory / "velora-blur.json"
+    try:
+        identity = header_identity()
+        sources = {p.name: digest(p) for p in (ROOT / "native/hyprland").iterdir() if p.is_file()}
+        key = hashlib.sha256(json.dumps([identity, sources], sort_keys=True).encode()).hexdigest()
+        saved = read_json(manifest)
+        if plugin.is_file() and saved.get("buildKey") == key and saved.get("sha256") == digest(plugin):
+            return plugin
+        # A fresh CMake tree prevents old objects/headers from surviving an ABI
+        # update. Build products stay in XDG cache, never in the checkout.
+        work = directory / key
+        for command in (["cmake", "-S", str(ROOT / "native/hyprland"), "-B", str(work),
+                         "-DCMAKE_BUILD_TYPE=Release"],
+                        ["cmake", "--build", str(work), "--parallel", str(jobs)]):
+            compile_command(command)
+        directory.mkdir(parents=True, exist_ok=True)
+        temporary = directory / ".velora-blur.so.new"
+        shutil.copy2(work / "velora-blur.so", temporary)
+        temporary.replace(plugin)
+        write_json(manifest, dict(identity, buildKey=key, sha256=digest(plugin)))
+        return plugin
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        # The public path must never advertise an old build after a failure.
+        plugin.unlink(missing_ok=True)
+        manifest.unlink(missing_ok=True)
+        detail = error_detail(error)
+        write_json(cache_dir() / "diagnostic.json", {"state": "build-failed", "diagnostic": detail[-4000:]})
+        raise RuntimeError("Blur nativo indisponível; blur do compositor preservado. " + detail[-1200:]) from error
+
+
+def inspect():
+    result = {"available": False, "loaded": False, "capabilities": [], "state": "unavailable",
+              "diagnostic": "", "running": {}}
+    try:
+        result["running"] = running_version()
+        plugins = json.loads(run(["hyprctl", "-j", "plugin", "list"]))
+        if not isinstance(plugins, list):
+            raise RuntimeError("Resposta inválida do catálogo de plugins Hyprland.")
+        result["loaded"] = any(p.get("name") == "velora-blur" for p in plugins)
+        if not result["loaded"]:
+            result.update(state="absent", diagnostic="Plugin ausente; usando blur do compositor.")
+            failure = read_json(cache_dir() / "diagnostic.json")
+            if failure.get("diagnostic"):
+                result["diagnostic"] += " " + failure["diagnostic"]
+            return result
+        status = json.loads(run(["hyprctl", "-j", "velora-blur-status"]))
+        result["native"] = status
+        if not status.get("active") or status.get("abi") != (result["running"].get("abiHash") or result["running"].get("commit")):
+            result.update(state="unverified", diagnostic="Plugin sem confirmação de ABI/capacidades; reconstrua e carregue com scripts/load-native-blur.")
+            return result
+        result.update(available=True, state="ready", capabilities=status.get("capabilities", []))
+    except (OSError, RuntimeError, ValueError, AttributeError, TypeError, subprocess.SubprocessError) as error:
+        result["diagnostic"] = "Blur nativo indisponível; usando blur do compositor: " + str(error)
+    return result
+
+
+def shell_ipc(method):
+    # Startup may precede the QML instance. Only a running shell needs to stop
+    # its native dispatchers while the library is being replaced.
+    try:
+        run(["qs", "-p", str(ROOT), "ipc", "call", "composition", method], timeout=2)
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        pass
+
+
+def load(plugin):
+    plugin = Path(plugin).resolve()
+    identity = read_json(plugin.with_suffix(".json"))
+    running = running_version()
+    if not plugin.is_file() or identity.get("sha256") != digest(plugin):
+        raise RuntimeError("Artefato ausente ou sem manifesto válido; execute scripts/build.")
+    if not abi_matches(identity, running):
+        raise RuntimeError("ABI dos headers/build difere do Hyprland em execução; reinicie o compositor após atualizar ou instale os headers correspondentes.")
+    runtime = cache_dir()
+    runtime.mkdir(parents=True, exist_ok=True)
+    with (runtime / "load.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        previous = read_json(runtime / "loaded.json")
+        state = inspect()
+        if (state["available"] and previous.get("sha256") == identity["sha256"]
+                and set(CAPABILITIES).issubset(state["capabilities"])):
+            shell_ipc("nativeBlurResume")
+            return state
+        shell_ipc("nativeBlurSuspend")
+        try:
+            if state["loaded"]:
+                old_path = previous.get("path") or str(runtime / "velora-blur.so")
+                run(["hyprctl", "plugin", "unload", old_path])
+                if inspect()["loaded"]:
+                    raise RuntimeError("Plugin anterior ainda carregado; não substituir sua biblioteca.")
+            # A unique path prevents dlopen from reusing a previous image. Keep its
+            # exact path for a later verified unload, including across checkouts.
+            destination = runtime / ("velora-blur-" + identity["sha256"][:24] + ".so")
+            shutil.copy2(plugin, destination)
+            output = run(["hyprctl", "plugin", "load", str(destination)])
+            state = inspect()
+            if not state["available"] or not set(CAPABILITIES).issubset(state["capabilities"]):
+                run(["hyprctl", "plugin", "unload", str(destination)])
+                raise RuntimeError("Hyprland não confirmou o plugin e suas capacidades após o load: " + output)
+            write_json(runtime / "loaded.json", dict(identity, path=str(destination)))
+            (runtime / "diagnostic.json").unlink(missing_ok=True)
+            return state
+        finally:
+            shell_ipc("nativeBlurResume")
+
+
+def layer_rules(text, release):
+    parsed = version(release)
+    if parsed is None:
+        raise RuntimeError("Versão do Hyprland desconhecida; não instalar regras presumidas.")
+    if parsed >= (0, 53, 0):
+        return text
+    result = []
+    for line in text.splitlines():
+        match = re.fullmatch(r"layerrule = (blur|blur_popups|ignore_alpha) ([^,]+), match:namespace (.+)", line)
+        if match:
+            rule, value, namespace = match.groups()
+            # Legacy layer rules cannot disable blur. The selector namespace
+            # is excluded from the generic Velora blur matcher already.
+            if rule == "blur" and value == "off":
+                continue
+            elif rule == "ignore_alpha":
+                line = f"layerrule = ignorealpha {value}, {namespace}"
+            else:
+                line = f"layerrule = {rule.replace('_', '')}, {namespace}"
+        result.append(line)
+    return "\n".join(result) + "\n"
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("status")
+    b = commands.add_parser("build"); b.add_argument("directory"); b.add_argument("--jobs", default="2")
+    loader = commands.add_parser("load"); loader.add_argument("plugin")
+    rules = commands.add_parser("rules"); rules.add_argument("template"); rules.add_argument("--version")
+    args = parser.parse_args()
+    try:
+        if args.command == "status": print(json.dumps(inspect()))
+        elif args.command == "build": print(build(args.directory, args.jobs))
+        elif args.command == "rules":
+            release = args.version
+            if not release:
+                try:
+                    running = running_version()
+                    release = running.get("version") or running.get("tag")
+                except (OSError, RuntimeError, subprocess.SubprocessError):
+                    pass
+                if not release:
+                    release = run(["Hyprland", "--version"])
+            print(layer_rules(Path(args.template).read_text(), release), end="")
+        else: print(json.dumps(load(args.plugin)))
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        detail = error_detail(error)
+        if args.command == "load":
+            write_json(cache_dir() / "diagnostic.json", {"state": "load-failed", "diagnostic": detail[-4000:]})
+        print("Velora: " + detail[-4000:], file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

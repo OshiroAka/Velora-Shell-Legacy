@@ -1,8 +1,11 @@
 import QtQuick
 import Quickshell
+import "../../core" as Core
 
 Scope {
     id: root
+    property var motion: defaultMotion
+    Core.Motion { id: defaultMotion }
     property string activeType: ""
     property var owner: null
     property var anchorItem: null
@@ -18,7 +21,7 @@ Scope {
     property string recoverType: ""
 
     function supportsHover(type) {
-        return ["thing", "caffeine", "timer", "notes", "battery", "monitor", "paint", "search", "controls", "clock"].includes(type)
+        return ["thing", "caffeine", "timer", "notes", "battery", "monitor", "paint", "wifi", "search", "controls", "clock"].includes(type)
     }
     function enter(type, item, host) {
         if (!supportsHover(type)) return
@@ -65,13 +68,13 @@ Scope {
 
     Timer {
         id: openDelay
-        interval: 110
+        interval: root.motion.intent
         onTriggered: if (root.hoveredItem && root.hoveredItem !== root.blockedItem)
             root.show(root.pendingType, root.hoveredItem, root.pendingHost, true)
     }
     Timer {
         id: leaveDelay
-        interval: 180
+        interval: root.motion.leaveGrace
         onTriggered: if (!root.hoveredItem && !root.panelHovered && !root.panelHeld) root.close(false)
     }
 
@@ -105,6 +108,7 @@ Scope {
     function snapshot() {
         return { active: activeType, monitor: owner ? owner.screen.name : "",
             keyboard: owner ? owner.keyboardState() : null,
+            surface: owner && typeof owner.popoverState === "function" ? owner.popoverState() : null,
             anchors: items.map(entry => ({ type: entry.type, monitor: entry.host.screen.name,
                 x: entry.item.mapToItem(null, entry.item.width / 2, 0).x })) }
     }

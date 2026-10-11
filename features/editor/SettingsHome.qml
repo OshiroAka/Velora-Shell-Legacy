@@ -228,6 +228,12 @@ Rectangle {
         spacing: 10
         Text { text: "Wallpaper"; color: root.ink; font.pixelSize: 14; font.weight: Font.DemiBold }
         ActionButton {
+            objectName: "wallpaperSelectorGlassToggle"
+            label: root.config.wallpaperSelectorGlassEnabled ? "Vidro do seletor ligado" : "Vidro do seletor desligado"
+            selected: root.config.wallpaperSelectorGlassEnabled
+            onTriggered: root.config.setValue("desktop.wallpaperSelectorGlassEnabled", !root.config.wallpaperSelectorGlassEnabled)
+        }
+        ActionButton {
             objectName: "wallpaperBlurToggle"
             label: root.config.wallpaperBlurEnabled ? "Blur do wallpaper ligado" : "Blur do wallpaper desligado"
             selected: root.config.wallpaperBlurEnabled
@@ -296,6 +302,17 @@ Rectangle {
         Text { width: parent.width; text: parent.detail; color: root.mutedInk; font.family: root.theme.bodyFont; font.pixelSize: 12; wrapMode: Text.WordWrap }
     }
 
+    Flickable {
+        id: settingsViewport
+        anchors.fill: parent
+        contentWidth: Math.max(width, 860)
+        contentHeight: Math.max(height, 444)
+        interactive: contentWidth > width || contentHeight > height
+        boundsBehavior: Flickable.StopAtBounds
+        clip: true
+    Item {
+        width: settingsViewport.contentWidth
+        height: settingsViewport.contentHeight
     Rectangle {
         id: header
         anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
@@ -787,5 +804,7 @@ Rectangle {
                 }
             }
         }
+    }
+    }
     }
 }

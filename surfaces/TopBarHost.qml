@@ -1,4 +1,5 @@
 import QtQuick
+import "../platform" as Platform
 import QtQuick.Window
 import Quickshell
 import Quickshell.Wayland
@@ -30,6 +31,7 @@ Variants {
     required property bool lockOccluding
     property real barWavePhase: 0
     property bool barOnRight: false
+    property bool nativeBarMaterial: false
     readonly property int sidebarRailWidth: 64
     readonly property int screenCornerRadius: 24
 
@@ -46,15 +48,13 @@ Variants {
         required property var modelData
         readonly property bool editingBar: root.editorController.shown
             && root.editorController.mode === "editing" && root.editorController.editSpace === "desktop"
-        readonly property int stripHeight: root.config.topbarVariant === "end4-first"
-            ? 40 : (root.config.referenceAppearance ? 40
-                : Math.round(root.config.topbarHeight * root.config.topbarScale))
+        readonly property int stripHeight: 40
         screen: modelData
         color: "transparent"
         implicitWidth: modelData.width
         // Keep the reference window mapped at a stable size during popovers.
         // The legacy variants keep their original strip and 3 px rail join.
-        implicitHeight: root.config.referenceAppearance ? modelData.height : stripHeight + 3
+        implicitHeight: modelData.height
         exclusiveZone: stripHeight
         exclusionMode: ExclusionMode.Normal
 
@@ -71,6 +71,11 @@ Variants {
         WlrLayershell.keyboardFocus: popover.mounted ? WlrKeyboardFocus.Exclusive
             : editingBar ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
 
+        function popoverState() {
+            return { mounted: popover.mounted, anchor: popover.anchorX,
+                x: popover.panelRect.x, y: popover.panelRect.y,
+                width: popover.panelRect.width, height: popover.panelRect.height }
+        }
         function keyboardState() {
             return { mode: WlrLayershell.keyboardFocus, active: popover.Window.active,
                 popupFocus: popover.activeFocus }
@@ -80,7 +85,7 @@ Variants {
         // the supplied video. There are no hidden optical islands underneath.
         BackgroundEffect.blurRegion: Region {
             item: root.config.referenceAppearance && root.config.barBlurEnabled
-                && root.config.barMaterial === "glass" ? connectedSurface : null
+                && (root.config.barMaterial === "glass" || !Platform.NativeBlur.supports("topbar-connected")) ? connectedSurface : null
         }
 
         // The reference panel owns its complete 40 px strip.
@@ -111,23 +116,31 @@ Variants {
         function syncConnectedSurface() {
             if (width <= 0 || height <= 0) return
             if (!root.config.referenceAppearance) {
-                Hyprland.dispatch("velora-blur:topbar-connected " + screen.name + " -1")
+                Platform.NativeBlur.dispatch("velora-blur:topbar-connected " + screen.name + " -1")
                 return
             }
             if (popover.mounted && height < modelData.height) return
-            const currentRect = popover.mounted ? popover.panelRect : executionIndicator.surfaceRect
+            const currentRect = popover.mounted ? popover.panelRect : Qt.rect(0, 0, 0, 0)
             const p = currentRect.height > 0.01 ? currentRect : Qt.rect(0, 0, 0, 0)
             // Anchor layout can settle one frame after a reload or screen resize.
             if (p.x < 0 || p.x + p.width > width) return
-            const anchor = popover.mounted ? popover.anchorX : width / 2
-            const neck = popover.mounted ? popover.neckHalfWidth : executionIndicator.neckHalfWidth
-            const radius = popover.mounted ? 18 : executionIndicator.cornerRadius
-            const join = popover.mounted ? 8 : executionIndicator.joinRadius
+            const anchor = popover.anchorX
+            const neck = popover.neckHalfWidth
+            const radius = 18
+            const join = 8
+            const statusRect = executionIndicator.surfaceRect
+            const s = statusRect.height > 0.01 && statusRect.x >= 0
+                && statusRect.x + statusRect.width <= width
+                && statusRect.y >= 0 && statusRect.y + statusRect.height <= height
+                ? statusRect : Qt.rect(0, 0, 0, 0)
             const values = [stripHeight / height, p.x / width, p.y / height,
                 p.width / width, p.height / height, anchor / width,
-                neck / width, radius / width, join / width]
-            Hyprland.dispatch("velora-blur:topbar-connected " + screen.name + " "
-                + (root.config.barMaterial === "liquid" ? 1 : 0) + " "
+                neck / width, radius / width, join / width,
+                s.x / width, s.y / height, s.width / width, s.height / height,
+                0.5, executionIndicator.neckHalfWidth / width,
+                executionIndicator.cornerRadius / width, executionIndicator.joinRadius / width]
+            Platform.NativeBlur.dispatch("velora-blur:topbar-connected " + screen.name + " "
+                + (root.config.barMaterial === "liquid" || root.nativeBarMaterial ? 1 : 0) + " "
                 + values.map(value => Number(value).toFixed(8)).join(" "))
         }
         property bool surfaceDirty: true
@@ -135,7 +148,7 @@ Variants {
         onHeightChanged: surfaceDirty = true
         Component.onDestruction: {
             if (root.controller.owner === topbarWindow) root.controller.close()
-            Hyprland.dispatch("velora-blur:topbar-connected " + screen.name + " -1")
+            Platform.NativeBlur.dispatch("velora-blur:topbar-connected " + screen.name + " -1")
         }
         FrameAnimation {
             running: topbarWindow.surfaceDirty
@@ -166,8 +179,8 @@ Variants {
             executionNeck: executionIndicator.neckHalfWidth
             executionRadius: executionIndicator.cornerRadius
             executionJoin: executionIndicator.joinRadius
-            fillColor: root.theme.barSurface
-            lineColor: root.config.barMaterial === "liquid" ? "transparent" : root.theme.borderSubtle
+            fillColor: root.nativeBarMaterial ? "transparent" : root.theme.barSurface
+            lineColor: root.config.barMaterial === "liquid" || root.nativeBarMaterial ? "transparent" : root.theme.borderSubtle
             onNeckHalfWidthChanged: topbarWindow.surfaceDirty = true
         }
         MouseArea {
@@ -180,10 +193,13 @@ Variants {
         }
         TopBarFeature.ConnectedPopover {
             id: popover
+            leftInset: root.barOnRight ? 8 : root.sidebarRailWidth + 8
+            rightInset: root.barOnRight ? root.sidebarRailWidth + 8 : 8
             z: 3
             width: topbarWindow.width
-            height: topbarWindow.modelData.height
+            height: topbarWindow.height
             host: topbarWindow
+            motionTokens: root.motion
             controller: root.controller; config: root.config; theme: root.theme
             status: root.status; system: root.system; timerService: root.timerService
             fanPlus: root.fanPlus
@@ -287,14 +303,13 @@ Variants {
             anchors.left: parent.left
             anchors.right: parent.right
             height: topbarWindow.stripHeight
-            sourceComponent: root.config.referenceAppearance ? referenceComponent
-                : root.config.topbarVariant === "end4-first"
-                ? end4FirstComponent : veloraComponent
+            sourceComponent: referenceComponent
         }
 
         Component {
             id: referenceComponent
             TopBarFeature.ReferenceBar {
+                onGeometryChanged: Qt.callLater(popover.refreshAnchor)
                 controller: root.controller; host: topbarWindow
                 system: root.system; timerService: root.timerService
                 width: topbarWindow.width; height: topbarWindow.stripHeight
@@ -307,46 +322,8 @@ Variants {
             }
         }
 
-        Component {
-            id: veloraComponent
-            TopBarFeature.TopBar {
-                width: topbarWindow.width
-                height: topbarWindow.stripHeight
-                nativeSurfaceHeight: topbarWindow.stripHeight
-                config: root.config
-                theme: root.theme
-                motion: root.motion
-                clock: root.clock
-                media: root.media
-                weather: root.weather
-                status: root.status
-                actions: root.actions
-                compositor: root.compositor
-                settings: root.settings
-                editorController: root.editorController
-                opticsGeneration: root.opticsGeneration
-            }
-        }
 
-        Component {
-            id: end4FirstComponent
-            TopBarFeature.End4FirstBar {
-                width: topbarWindow.width
-                height: topbarWindow.stripHeight
-                nativeSurfaceHeight: topbarWindow.stripHeight
-                config: root.config
-                theme: root.theme
-                motion: root.motion
-                clock: root.clock
-                media: root.media
-                weather: root.weather
-                status: root.status
-                actions: root.actions
-                compositor: root.compositor
-                settings: root.settings
-                editorController: root.editorController
-                opticsGeneration: root.opticsGeneration
-            }
-        }
+
+
     }
 }

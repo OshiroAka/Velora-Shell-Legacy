@@ -1,17 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-plugin_path=${1:?Pass the compiled compositor plugin path}
-runtime_dir="${XDG_CACHE_HOME:-$HOME/.cache}/velora-shell/native"
-runtime_plugin_path="$runtime_dir/velora-blur.so"
-if hyprctl plugin list | rg -q '^Plugin velora-blur by '; then
-    if cmp -s "$plugin_path" "$runtime_plugin_path"; then exit 0; fi
-    hyprctl plugin unload "$runtime_plugin_path"
-fi
-mkdir -p "$runtime_dir"
-staged_plugin=$(mktemp "$runtime_dir/.velora-blur.XXXXXX.so")
-trap 'rm -f -- "$staged_plugin"' EXIT
-install -m755 "$plugin_path" "$staged_plugin"
-mv -f "$staged_plugin" "$runtime_plugin_path"
-hyprctl plugin load "$runtime_plugin_path"
+python3 "$project_dir/scripts/native-blur" load "${1:?Pass the compiled compositor plugin path}"
 qs ipc -p "$project_dir" call composition opticsResync >/dev/null 2>&1 || true

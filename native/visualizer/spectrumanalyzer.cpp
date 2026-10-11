@@ -63,6 +63,18 @@ std::vector<float> SpectrumAnalyzer::values() const {
     return values_;
 }
 
+QString SpectrumAnalyzer::materialFrame() const {
+    // One bounded snapshot for the compositor's shared bar material. Capture
+    // and FFT remain in this analyzer; no second audio producer is started.
+    QString result;
+    result.reserve(700);
+    for (float value : values()) {
+        result += QLatin1Char(' ');
+        result += QString::number(std::clamp(value, 0.F, 1.F), 'f', 4);
+    }
+    return result;
+}
+
 void SpectrumAnalyzer::setRunning(bool value) {
     if (running_.exchange(value, std::memory_order_relaxed) == value)
         return;

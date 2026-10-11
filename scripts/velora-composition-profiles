@@ -181,7 +181,7 @@ def ensure_profile_composition_versions(index_path: Path,
         composition["topbarLayout"] = layout
         if layout_changed:
             composition["topbar"] = {
-                "variant": "velora", "height": 40, "scale": 1.0,
+                "height": 40, "scale": 1.0,
                 "gap": 4, "margin": 8,
             }
         if previous_version < 7:
@@ -205,7 +205,7 @@ def ensure_profile_composition_versions(index_path: Path,
             topbar = composition.get("topbar")
             if not isinstance(topbar, dict):
                 topbar = {}
-            topbar.setdefault("variant", "velora")
+            topbar.pop("variant", None)
             topbar.setdefault("height", 40)
             topbar.setdefault("scale", 1.0)
             topbar.setdefault("gap", 4)
@@ -371,9 +371,6 @@ def normalize_snapshot(value: object) -> dict:
                 result = fallback
             return max(minimum, min(maximum, result))
         normalized["topbar"] = {
-            "variant": str(topbar.get("variant", "velora"))
-                if str(topbar.get("variant", "velora")) in {
-                    "velora", "end4-first"} else "velora",
             "height": topbar_number("height", 40, 36, 52),
             "scale": topbar_number("scale", 1, 0.75, 1.35),
             "gap": topbar_number("gap", 4, 0, 12),

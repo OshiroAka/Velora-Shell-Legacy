@@ -1,4 +1,6 @@
 import QtQuick
+import "platform" as Platform
+import "core/SurfaceGeometry.js" as SurfaceGeometry
 import Qt5Compat.GraphicalEffects
 import Quickshell
 import Quickshell.Hyprland
@@ -26,14 +28,6 @@ Scope {
         root.syncTopBarWindowGaps()
     })
 
-    Connections {
-        target: veloraTheme
-        function onTopBarEnabledChanged() {
-            root.syncTopBarWindowGaps()
-            if (root.topBarLayout)
-                root.disableWeatherTopNow()
-        }
-    }
 
     NotificationServer {
         id: veloraNotificationServer
@@ -140,6 +134,7 @@ Scope {
     property bool rightDashboardOpen: false
     property real topBarPopupCenterX: 0
     property bool topWallpaperPopupOpen: false
+    property var wallpaperSelectorViews: ({})
     property bool topWallpaperKeyboardFocus: false
     property bool topWallpaperCardsMounted: false
     property real topWallpaperFrameReveal: topWallpaperPopupOpen ? 1 : 0
@@ -184,6 +179,7 @@ Scope {
     property real leftMenuHandleSurfaceReveal: (!leftMenuOpen && (leftMenuTriggerHovering || leftMenuHandleHovering || leftMenuHandleRevealHold)) ? 1 : 0
     property real leftMediaWindowCenterY: 300
     property string leftDetailWindowType: "media"
+    signal railMediaRequested()
     property real leftDetailSwitchProgress: 1
     property bool leftMenuInteractiveFocus: false
     property bool leftMenuPreloadEnabled: false
@@ -1902,10 +1898,14 @@ Scope {
     }
 
     Behavior on topWallpaperFrameReveal {
-        enabled: veloraTheme.motionEnabled
-        NumberAnimation {
-            duration: root.topWallpaperPopupOpen ? veloraTheme.motionPanelIn : veloraTheme.motionPanelOut
-            easing.type: root.topWallpaperPopupOpen ? veloraTheme.motionEaseEnter : veloraTheme.motionEaseExit
+        enabled: veloraTheme.motionEnabled && !(root.composition && root.composition.reducedMotion)
+        SequentialAnimation {
+            PauseAnimation { duration: root.topWallpaperPopupOpen ? 0 : (root.composition ? root.composition.motionTokens.contentExit : 65) }
+            NumberAnimation {
+                duration: root.composition ? (root.topWallpaperPopupOpen ? root.composition.motionTokens.accordionDuration : root.composition.motionTokens.accordionCloseDuration)
+                    : (root.topWallpaperPopupOpen ? veloraTheme.motionPanelIn : veloraTheme.motionPanelOut)
+                easing.type: Easing.InOutCubic
+            }
         }
     }
 
@@ -1987,12 +1987,13 @@ Scope {
     }
 
     function topWallpaperPopupWidth(screenWidth) {
-        const available = Math.max(760, screenWidth - barReserveWidth - desktopFrameMargin * 4)
-        return Math.round(Math.min(1340, Math.max(960, Math.min(available, screenWidth * 0.82))))
+        const available = Math.max(0, Math.floor(screenWidth - barReserveWidth - desktopFrameMargin * 4))
+        return Math.round(Math.min(available, 1340, Math.max(960, screenWidth * 0.82)))
     }
 
     function topWallpaperPopupHeight(screenHeight) {
-        return Math.round(Math.min(840, Math.max(640, screenHeight * 0.72)))
+        const available = Math.max(0, Math.floor(screenHeight - 64))
+        return Math.min(available, Math.round(Math.min(840, Math.max(640, screenHeight * 0.72))))
     }
 
     function topWallpaperFrameLiftHeight(screenHeight) {
@@ -2313,6 +2314,11 @@ Scope {
 
         const direction = delta > 0 ? 1 : -1
 
+        if (topWallpaperUsesCenterSelector) {
+            selectTopWallpaperAbsolute(Math.max(0, Math.min(entries.length - 1, topWallpaperOffset + direction)))
+            return
+        }
+
         if (topWallpaperSlideAnimation.running) {
             topWallpaperQueuedDirection = Math.max(-6, Math.min(6, topWallpaperQueuedDirection + direction))
             return
@@ -2466,7 +2472,6 @@ Scope {
     }
 
     function switchToSideBarLayout(position) {
-        veloraTheme.setTopBarEnabled(false)
         veloraTheme.applyLayout(position, true)
     }
 
@@ -2492,7 +2497,7 @@ Scope {
         settingsPanelOpen = false
         settingsPanelWindowOpen = false
 
-        switchToSideBarLayoutWithFade((veloraTheme.topBarEnabled || !barOnRight) ? "right" : "left")
+        switchToSideBarLayoutWithFade((!barOnRight) ? "right" : "left")
     }
 
     function engageWeatherTop() {
@@ -3520,6 +3525,12 @@ Scope {
     }
 
     function quickPopupX(type, screenWidth, popupWidth) {
+        const left = mainAreaX(screenWidth)
+        const right = screenWidth - mainAreaRightInset(screenWidth)
+        return SurfaceGeometry.clamp(Math.round(preferredQuickPopupX(type, screenWidth, popupWidth)), Math.ceil(left), Math.floor(right - popupWidth))
+    }
+
+    function preferredQuickPopupX(type, screenWidth, popupWidth) {
         if (quickPopupUsesReferencePlacement(type)) {
             const edge = Math.max(0, frameVisualInset)
             if (type === "settingsQuick" || type === "notifications")
@@ -3627,11 +3638,11 @@ Scope {
     }
 
     function quickPopupWidthForScreen(type, screenWidth) {
+        const available = Math.max(0, Math.floor(mainAreaWidth(screenWidth) - 16))
         if (type === "agenda" || type === "weatherPanel") {
-            const available = Math.max(900, mainAreaWidth(screenWidth) - 110)
-            return Math.round(Math.max(1510, Math.min(1680, available)))
+            return Math.round(Math.min(available, Math.max(1510, Math.min(1680, mainAreaWidth(screenWidth) - 110))))
         }
-        return quickPopupWidth(type)
+        return Math.min(quickPopupWidth(type), available)
     }
 
     function quickPopupHeight(type) {
@@ -3684,10 +3695,10 @@ Scope {
 
     function quickPopupHeightForScreen(type, screenHeight) {
         if (type === "agenda" || type === "weatherPanel") {
-            const available = Math.max(900, screenHeight - frameVisualInset * 2 - 110)
-            return Math.round(Math.min(1040, available))
+            const available = Math.max(0, Math.floor(screenHeight - frameVisualInset * 2 - 64))
+            return Math.min(1040, available)
         }
-        return quickPopupHeight(type)
+        return Math.min(quickPopupHeight(type), Math.max(0, Math.floor(screenHeight - 64)))
     }
 
     function quickPopupTopMargin(type) {
@@ -3698,7 +3709,7 @@ Scope {
 
     function quickPopupY(type, panelHeight, screenHeight) {
         const edgeMargin = frameVisualInset + popupFrameGap
-        const maxY = screenHeight - panelHeight - edgeMargin
+        const maxY = Math.floor(screenHeight - panelHeight - edgeMargin)
         function clampY(wanted) {
             if (maxY < edgeMargin)
                 return Math.round(Math.max(edgeMargin, maxY))
@@ -4056,6 +4067,13 @@ Scope {
             root.toggleTopWallpaperPopup(null, true)
         }
 
+        function wallpaperSelectorState(): string {
+            const state = {}
+            for (const name in root.wallpaperSelectorViews)
+                state[name] = root.wallpaperSelectorViews[name].diagnostics()
+            return JSON.stringify(state)
+        }
+
         function topWallpaperNext(): void {
             root.moveTopWallpaper(1)
         }
@@ -4252,7 +4270,8 @@ Scope {
         }
 
         function media(): void {
-            root.openRightDashboard("media")
+            if (root.sideBarLayoutEnabled) root.railMediaRequested()
+            else root.openRightDashboard("media")
         }
 
         function leftMenu(): void {
@@ -4320,17 +4339,11 @@ Scope {
             veloraTheme.setDesktopFrameEnabled(false)
         }
 
-        function topBarOn(): void {
-            veloraTheme.setTopBarEnabled(true)
-        }
 
-        function topBarOff(): void {
-            veloraTheme.setTopBarEnabled(false)
-        }
 
-        function toggleTopBar(): void {
-            veloraTheme.toggleTopBarEnabled()
-        }
+
+
+
 
         function layoutCycle(): void {
             root.cycleBarLayout()
@@ -5223,697 +5236,9 @@ Scope {
         }
     }
 
-    Variants {
-        model: root.topBarFrameVisualsMounted ? Quickshell.screens : []
 
-        PanelWindow {
-            id: topBarFramePanel
 
-            required property var modelData
-            readonly property int panelWidth: modelData.width > 0 ? modelData.width : 1920
-            readonly property int panelHeight: modelData.height > 0 ? modelData.height : 1200
-
-            screen: modelData
-            color: "transparent"
-            implicitWidth: panelWidth
-            implicitHeight: panelHeight
-            exclusiveZone: 0
-            exclusionMode: ExclusionMode.Ignore
-            focusable: false
-
-            WlrLayershell.layer: WlrLayer.Bottom
-            WlrLayershell.namespace: "velora-shell-topbar-frame"
-            WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-
-            anchors {
-                top: true
-                bottom: true
-                left: true
-                right: true
-            }
-
-            mask: Region {}
-
-            Canvas {
-                id: topBarFrameCanvas
-
-                anchors.fill: parent
-                antialiasing: true
-                opacity: root.layoutSwitchOpacity
-
-                function roundedRectPath(ctx, x, y, w, h, radius) {
-                    const r = Math.min(radius, Math.max(0, w / 2), Math.max(0, h / 2))
-                    const x2 = x + w
-                    const y2 = y + h
-
-                    ctx.beginPath()
-                    ctx.moveTo(x + r, y)
-                    ctx.lineTo(x2 - r, y)
-                    ctx.arcTo(x2, y, x2, y + r, r)
-                    ctx.lineTo(x2, y2 - r)
-                    ctx.arcTo(x2, y2, x2 - r, y2, r)
-                    ctx.lineTo(x + r, y2)
-                    ctx.arcTo(x, y2, x, y2 - r, r)
-                    ctx.lineTo(x, y + r)
-                    ctx.arcTo(x, y, x + r, y, r)
-                    ctx.closePath()
-                }
-
-                function barContactForFrameY(frameY) {
-                    const barWidth = root.topBarPanelStageWidth(width)
-                    const barHeight = root.topBarPanelHeight(height)
-                    const barX = Math.round((width - barWidth) / 2)
-                    const barY = root.topBarPanelTopMargin(height)
-                    const barRadius = barHeight / 2
-                    const centerY = barY + barRadius
-                    const dy = Math.max(-barRadius, Math.min(barRadius, frameY - centerY))
-                    const horizontal = Math.sqrt(Math.max(0, barRadius * barRadius - dy * dy))
-
-                    return {
-                        left: Math.round(barX + barRadius - horizontal),
-                        right: Math.round(barX + barWidth - barRadius + horizontal)
-                    }
-                }
-
-                function strokeFrameOutline(ctx, x, y, w, h, radius, leftGap, rightGap) {
-                    const r = Math.min(radius, Math.max(0, w / 2), Math.max(0, h / 2))
-                    const x2 = x + w
-                    const y2 = y + h
-                    const leftBreak = Math.max(x + r, Math.min(x2 - r, leftGap))
-                    const rightBreak = Math.max(x + r, Math.min(x2 - r, rightGap))
-
-                    ctx.beginPath()
-                    ctx.moveTo(x + r, y)
-                    ctx.lineTo(leftBreak, y)
-
-                    ctx.moveTo(rightBreak, y)
-                    ctx.lineTo(x2 - r, y)
-                    ctx.arcTo(x2, y, x2, y + r, r)
-                    ctx.lineTo(x2, y2 - r)
-                    ctx.arcTo(x2, y2, x2 - r, y2, r)
-                    ctx.lineTo(x + r, y2)
-                    ctx.arcTo(x, y2, x, y2 - r, r)
-                    ctx.lineTo(x, y + r)
-                    ctx.arcTo(x, y, x + r, y, r)
-                    ctx.stroke()
-                }
-
-                function paintCorner(ctx, corner, fx, fy, fw, fh, radius) {
-                    const x2 = fx + fw
-                    const y2 = fy + fh
-                    ctx.beginPath()
-
-                    if (corner === "topLeft") {
-                        ctx.moveTo(fx, fy)
-                        ctx.lineTo(fx + radius, fy)
-                        ctx.arc(fx + radius, fy + radius, radius, -Math.PI / 2, Math.PI, true)
-                        ctx.lineTo(fx, fy)
-                    } else if (corner === "topRight") {
-                        ctx.moveTo(x2, fy)
-                        ctx.lineTo(x2 - radius, fy)
-                        ctx.arc(x2 - radius, fy + radius, radius, -Math.PI / 2, 0, false)
-                        ctx.lineTo(x2, fy)
-                    } else if (corner === "bottomRight") {
-                        ctx.moveTo(x2, y2)
-                        ctx.lineTo(x2, y2 - radius)
-                        ctx.arc(x2 - radius, y2 - radius, radius, 0, Math.PI / 2, false)
-                        ctx.lineTo(x2, y2)
-                    } else if (corner === "bottomLeft") {
-                        ctx.moveTo(fx, y2)
-                        ctx.lineTo(fx + radius, y2)
-                        ctx.arc(fx + radius, y2 - radius, radius, Math.PI / 2, Math.PI, false)
-                        ctx.lineTo(fx, y2)
-                    }
-
-                    ctx.closePath()
-                    ctx.fill()
-                }
-
-                function frameOpeningPath(ctx, x, y, w, h, radius, barX, barY, barWidth, barHeight) {
-                    const r = Math.min(radius, Math.max(0, w / 2), Math.max(0, h / 2))
-                    const x2 = x + w
-                    const y2 = y + h
-                    const barPad = Math.round(Math.max(18, Math.min(34, barHeight * 0.56)))
-                    const notchLeft = Math.max(x + r, Math.round(barX - barPad))
-                    const notchRight = Math.min(x2 - r, Math.round(barX + barWidth + barPad))
-                    const saddleLeft = Math.max(x + r, Math.round(barX + barHeight * 0.54))
-                    const saddleRight = Math.min(x2 - r, Math.round(barX + barWidth - barHeight * 0.54))
-                    const saddleY = Math.min(y2 - r, Math.max(y, Math.round(barY + barHeight + 7)))
-                    const hasSaddle = false
-
-                    ctx.beginPath()
-                    ctx.moveTo(x + r, y)
-
-                    if (hasSaddle) {
-                        ctx.lineTo(notchLeft, y)
-                        ctx.bezierCurveTo(
-                            notchLeft + barPad * 0.72, y,
-                            saddleLeft - barPad * 0.94, saddleY,
-                            saddleLeft, saddleY
-                        )
-                        ctx.lineTo(saddleRight, saddleY)
-                        ctx.bezierCurveTo(
-                            saddleRight + barPad * 0.94, saddleY,
-                            notchRight - barPad * 0.72, y,
-                            notchRight, y
-                        )
-                    }
-
-                    ctx.lineTo(x2 - r, y)
-                    ctx.arcTo(x2, y, x2, y + r, r)
-                    ctx.lineTo(x2, y2 - r)
-                    ctx.arcTo(x2, y2, x2 - r, y2, r)
-                    ctx.lineTo(x + r, y2)
-                    ctx.arcTo(x, y2, x, y2 - r, r)
-                    ctx.lineTo(x, y + r)
-                    ctx.arcTo(x, y, x + r, y, r)
-                    ctx.closePath()
-                }
-
-                function topBarVisualizerRawValue(index) {
-                    if (!root.topBarCavaValues || root.topBarCavaValues.length <= 0)
-                        return 0
-
-                    const value = Number(root.topBarCavaValues[Math.max(0, Math.min(index, root.topBarCavaValues.length - 1))])
-                    return Math.max(0, Math.min(1, isNaN(value) ? 0 : value))
-                }
-
-                function topBarVisualizerSmooth(t) {
-                    const v = Math.max(0, Math.min(1, t))
-                    return v * v * (3 - 2 * v)
-                }
-
-                function topBarVisualizerBaseYAt(xPos, frameTop, barX, barWidth, barHeight) {
-                    const barPad = Math.round(Math.max(18, Math.min(34, barHeight * 0.56)))
-                    const notchLeft = Math.round(barX - barPad)
-                    const notchRight = Math.round(barX + barWidth + barPad)
-                    const saddleLeft = Math.round(barX + barHeight * 0.54)
-                    const saddleRight = Math.round(barX + barWidth - barHeight * 0.54)
-                    const saddleY = Math.round(root.topBarPanelTopMargin(height) + barHeight + 7)
-
-                    if (xPos < notchLeft || xPos > notchRight)
-                        return frameTop
-                    if (xPos < saddleLeft) {
-                        const t = topBarVisualizerSmooth((xPos - notchLeft) / Math.max(1, saddleLeft - notchLeft))
-                        return frameTop + (saddleY - frameTop) * t
-                    }
-                    if (xPos <= saddleRight)
-                        return saddleY
-
-                    const t = topBarVisualizerSmooth((xPos - saddleRight) / Math.max(1, notchRight - saddleRight))
-                    return saddleY + (frameTop - saddleY) * t
-                }
-
-                function continueTopBarVisualizerPath(ctx, points) {
-                    if (points.length < 2)
-                        return
-
-                    ctx.moveTo(points[0].x, points[0].y)
-                    for (let i = 1; i < points.length; i += 1) {
-                        const previous = points[i - 1]
-                        const current = points[i]
-                        ctx.quadraticCurveTo(previous.x, previous.y, (previous.x + current.x) / 2, (previous.y + current.y) / 2)
-                    }
-                    const last = points[points.length - 1]
-                    ctx.lineTo(last.x, last.y)
-                }
-
-                function paintIntegratedTopBarVisualizer(ctx, fx, fy, fw, fh, radius, barX, barY, barWidth, barHeight) {
-                    if (!root.topBarFrameVisualizerMounted || !root.topBarCavaValues || root.topBarCavaValues.length <= 0)
-                        return
-
-                    const count = Math.max(32, root.topBarCavaValues.length * 2)
-                    const barPad = Math.round(Math.max(18, Math.min(34, barHeight * 0.56)))
-                    const railLeft = Math.max(fx + radius, Math.round(barX - barPad))
-                    const railRight = Math.min(fx + fw - radius, Math.round(barX + barWidth + barPad))
-                    const baseDrop = Math.max(2, Math.min(6, 1 + veloraTheme.visualizerStrength * 7))
-                    const waveHeight = Math.max(16, Math.min(34, root.sideVisualizerWaveWidth * veloraTheme.visualizerStrength))
-                    const accent = veloraTheme.themeId === "pywal16" ? veloraTheme.sidebarBorderGlow : veloraTheme.activeText
-                    const boundaryPoints = []
-                    var peak = 0
-
-                    if (railRight <= railLeft)
-                        return
-
-                    for (let i = 0; i < count; i += 1) {
-                        const unit = i / Math.max(1, count - 1)
-                        const xPos = railLeft + (railRight - railLeft) * unit
-                        const scaled = unit * Math.max(1, root.topBarCavaValues.length - 1)
-                        const leftIndex = Math.max(0, Math.min(root.topBarCavaValues.length - 1, Math.floor(scaled)))
-                        const rightIndex = Math.max(leftIndex, Math.min(root.topBarCavaValues.length - 1, Math.ceil(scaled)))
-                        const mix = scaled - leftIndex
-                        const baseY = topBarVisualizerBaseYAt(xPos, fy, barX, barWidth, barHeight)
-                        const lifted = topBarVisualizerRawValue(leftIndex) * (1 - mix) + topBarVisualizerRawValue(rightIndex) * mix
-                        const edgeFade = Math.min(1, i / 5, (count - 1 - i) / 5)
-                        const available = Math.max(10, height - baseY - baseDrop - 2)
-                        const maxAmp = Math.min(available, waveHeight)
-                        const amp = Math.min(maxAmp, Math.pow(lifted, 0.82) * maxAmp) * edgeFade
-                        const pulse = 0.78 + Math.abs(Math.sin(i * 0.70)) * 0.22
-
-                        peak = Math.max(peak, lifted)
-                        boundaryPoints.push({ x: xPos, y: Math.min(height - 2, baseY + baseDrop + amp * pulse) })
-                    }
-
-                    ctx.save()
-                    ctx.lineCap = "round"
-                    ctx.lineJoin = "round"
-
-                    function visualizerFillPath() {
-                        ctx.beginPath()
-                        ctx.moveTo(railLeft, 0)
-                        ctx.lineTo(railRight, 0)
-                        ctx.lineTo(boundaryPoints[boundaryPoints.length - 1].x, boundaryPoints[boundaryPoints.length - 1].y)
-                        for (let j = boundaryPoints.length - 1; j >= 0; j -= 1)
-                            ctx.lineTo(boundaryPoints[j].x, boundaryPoints[j].y)
-                        ctx.lineTo(railLeft, 0)
-                        ctx.closePath()
-                    }
-
-                    var fill = root.topBarFrameMatteColor()
-                    if (veloraTheme.visualizerGradientEnabled) {
-                        fill = ctx.createLinearGradient(railLeft, 0, railRight, 0)
-                        fill.addColorStop(0.0, root.topBarFrameMatteColor())
-                        fill.addColorStop(0.50, veloraTheme.alpha(accent, Math.min(0.18, 0.055 + peak * 0.15)))
-                        fill.addColorStop(1.0, root.topBarFrameMatteColor())
-                    }
-
-                    ctx.globalCompositeOperation = "destination-out"
-                    ctx.fillStyle = Qt.rgba(0, 0, 0, 1)
-                    visualizerFillPath()
-                    ctx.fill()
-                    ctx.globalCompositeOperation = "source-over"
-
-                    ctx.fillStyle = fill
-                    visualizerFillPath()
-                    ctx.fill()
-
-                    if (veloraTheme.topBarFrameLineEnabled) {
-                        ctx.strokeStyle = root.topBarFrameBorderColor()
-                        ctx.lineWidth = 1
-                        ctx.beginPath()
-                        continueTopBarVisualizerPath(ctx, boundaryPoints)
-                        ctx.stroke()
-
-                        ctx.strokeStyle = root.topBarFrameInnerLineColor()
-                        ctx.lineWidth = 0.75
-                        ctx.beginPath()
-                        continueTopBarVisualizerPath(ctx, boundaryPoints)
-                        ctx.stroke()
-                    }
-
-                    ctx.restore()
-                }
-
-                function paintTopMatte(ctx, x, y, w, h, radius, barX, barY, barWidth, barHeight) {
-                    const r = Math.min(radius, Math.max(0, w / 2), Math.max(0, h / 2))
-                    const x2 = x + w
-                    const barPad = Math.round(Math.max(18, Math.min(34, barHeight * 0.56)))
-                    const notchLeft = Math.max(x + r, Math.round(barX - barPad))
-                    const notchRight = Math.min(x2 - r, Math.round(barX + barWidth + barPad))
-                    const saddleLeft = Math.max(x + r, Math.round(barX + barHeight * 0.54))
-                    const saddleRight = Math.min(x2 - r, Math.round(barX + barWidth - barHeight * 0.54))
-                    const saddleY = Math.max(y, Math.round(barY + barHeight + 7))
-                    const hasSaddle = false
-
-                    ctx.beginPath()
-                    ctx.moveTo(0, 0)
-                    ctx.lineTo(width, 0)
-                    ctx.lineTo(width, y)
-                    ctx.lineTo(x2 - r, y)
-
-                    if (hasSaddle) {
-                        ctx.lineTo(notchRight, y)
-                        ctx.bezierCurveTo(
-                            notchRight - barPad * 0.72, y,
-                            saddleRight + barPad * 0.94, saddleY,
-                            saddleRight, saddleY
-                        )
-                        ctx.lineTo(saddleLeft, saddleY)
-                        ctx.bezierCurveTo(
-                            saddleLeft - barPad * 0.94, saddleY,
-                            notchLeft + barPad * 0.72, y,
-                            notchLeft, y
-                        )
-                    }
-
-                    ctx.lineTo(x + r, y)
-                    ctx.lineTo(0, y)
-                    ctx.closePath()
-                    ctx.fill()
-                }
-
-                onPaint: {
-                    const ctx = getContext("2d")
-                    const frameMargin = root.topBarFrameMargin(width)
-                    const fx = frameMargin
-                    const fy = root.topBarFrameTop(height)
-                    const fw = Math.max(0, width - frameMargin * 2)
-                    const fh = Math.max(0, height - fy - root.topBarFrameBottomInset(height))
-                    const radius = Math.min(root.topBarFrameRadius(height), Math.max(0, fw / 2), Math.max(0, fh / 2))
-                    const barWidth = root.topBarPanelStageWidth(width)
-                    const barHeight = root.topBarPanelHeight(height)
-                    const barX = Math.round((width - barWidth) / 2)
-                    const barY = root.topBarPanelTopMargin(height)
-
-                    ctx.clearRect(0, 0, width, height)
-                    if (!root.topBarFrameVisualsMounted || fw <= 0 || fh <= 0)
-                        return
-
-                    ctx.save()
-                    ctx.fillStyle = root.topBarFrameMatteColor()
-                    paintTopMatte(ctx, fx, fy, fw, fh, radius, barX, barY, barWidth, barHeight)
-                    ctx.fillRect(0, fy + fh, width, Math.max(0, height - fy - fh))
-                    ctx.fillRect(0, fy, fx, fh)
-                    ctx.fillRect(fx + fw, fy, Math.max(0, width - fx - fw), fh)
-                    paintCorner(ctx, "topLeft", fx, fy, fw, fh, radius)
-                    paintCorner(ctx, "topRight", fx, fy, fw, fh, radius)
-                    paintCorner(ctx, "bottomRight", fx, fy, fw, fh, radius)
-                    paintCorner(ctx, "bottomLeft", fx, fy, fw, fh, radius)
-
-                    if (veloraTheme.topBarFrameLineEnabled) {
-                        ctx.strokeStyle = root.topBarFrameBorderColor()
-                        ctx.lineWidth = 1
-                        ctx.lineCap = "round"
-                        ctx.lineJoin = "round"
-                        frameOpeningPath(ctx, fx + 0.5, fy + 0.5, Math.max(0, fw - 1), Math.max(0, fh - 1), Math.max(0, radius - 0.5), barX, barY, barWidth, barHeight)
-                        ctx.stroke()
-
-                        ctx.strokeStyle = root.topBarFrameInnerLineColor()
-                        frameOpeningPath(ctx, fx + 1.5, fy + 1.5, Math.max(0, fw - 3), Math.max(0, fh - 3), Math.max(0, radius - 1.5), barX, barY, barWidth, barHeight)
-                        ctx.stroke()
-                    }
-                    paintIntegratedTopBarVisualizer(ctx, fx, fy, fw, fh, radius, barX, barY, barWidth, barHeight)
-                    ctx.restore()
-                }
-
-                Component.onCompleted: requestPaint()
-                onWidthChanged: requestPaint()
-                onHeightChanged: requestPaint()
-            }
-
-            Connections {
-                target: veloraTheme
-                function onSurfaceSidebarChanged() { topBarFrameCanvas.requestPaint() }
-                function onSidebarOpacityChanged() { topBarFrameCanvas.requestPaint() }
-                function onFrameBlurEnabledChanged() { topBarFrameCanvas.requestPaint() }
-                function onThemeModeChanged() { topBarFrameCanvas.requestPaint() }
-                function onThemeIdChanged() { topBarFrameCanvas.requestPaint() }
-                function onSidebarBorderGlowChanged() { topBarFrameCanvas.requestPaint() }
-                function onBorderSoftChanged() { topBarFrameCanvas.requestPaint() }
-                function onVisualizerStrengthChanged() { topBarFrameCanvas.requestPaint() }
-                function onVisualizerGradientEnabledChanged() { topBarFrameCanvas.requestPaint() }
-                function onTopBarFrameLineEnabledChanged() { topBarFrameCanvas.requestPaint() }
-            }
-
-            Connections {
-                target: root
-                function onLayoutSwitchOpacityChanged() { topBarFrameCanvas.requestPaint() }
-                function onTopBarFrameVisualizerMountedChanged() { topBarFrameCanvas.requestPaint() }
-                function onTopBarCavaValuesChanged() {
-                    if (root.topBarFrameVisualizerMounted)
-                        topBarFrameCanvas.requestPaint()
-                }
-            }
-
-            Canvas {
-                id: topBarUnderVisualizerCanvas
-
-                readonly property bool activeForPaint: false
-                readonly property int sampleCount: Math.max(48, Math.min(92, Math.round(width / 18)))
-                readonly property bool pixelMode: veloraTheme.visualizerMode === "pixels"
-                readonly property int barHeight: root.topBarPanelHeight(parent.height)
-                readonly property int barWidth: root.topBarPanelStageWidth(parent.width)
-                readonly property int topClearance: Math.round(root.topBarPanelTopMargin(parent.height) + barHeight - 1)
-                readonly property int frameMargin: root.topBarFrameMargin(parent.width)
-                readonly property int visualizerWidth: Math.round(Math.min(parent.width - frameMargin * 2 - 28, barWidth))
-                readonly property int visualizerHeight: Math.round(Math.min(84, Math.max(54, barHeight * 1.22)))
-
-                x: Math.round((parent.width - width) / 2)
-                y: topClearance
-                width: Math.max(0, visualizerWidth)
-                height: visualizerHeight
-                visible: false
-                opacity: root.layoutSwitchOpacity
-                antialiasing: true
-                clip: true
-                z: 2
-
-                function requestVisualizerPaint(force) {
-                    if (!activeForPaint) {
-                        topBarUnderVisualizerPaintTimer.stop()
-                        if (force)
-                            requestPaint()
-                        return
-                    }
-
-                    if (force) {
-                        topBarUnderVisualizerPaintTimer.stop()
-                        requestPaint()
-                        return
-                    }
-
-                    if (!topBarUnderVisualizerPaintTimer.running)
-                        topBarUnderVisualizerPaintTimer.restart()
-                }
-
-                function accentColor() {
-                    if (veloraTheme.themeId === "pywal16")
-                        return veloraTheme.sidebarBorderGlow
-                    return veloraTheme.activeText
-                }
-
-                function cavaValue(unit) {
-                    const values = root.topBarCavaValues || []
-                    if (values.length <= 0)
-                        return 0
-
-                    const normalized = Math.max(0, Math.min(1, unit))
-                    const scaled = normalized * Math.max(1, values.length - 1)
-                    const left = Math.max(0, Math.min(values.length - 1, Math.floor(scaled)))
-                    const right = Math.max(left, Math.min(values.length - 1, Math.ceil(scaled)))
-                    const mix = scaled - left
-                    const leftValue = Number(values[left])
-                    const rightValue = Number(values[right])
-                    const value = (isNaN(leftValue) ? 0 : leftValue) * (1 - mix) + (isNaN(rightValue) ? 0 : rightValue) * mix
-
-                    return Math.max(0, Math.min(1, value))
-                }
-
-                function roundedBar(ctx, x, y, w, h, r) {
-                    const radius = Math.min(r, w / 2, h / 2)
-                    const x2 = x + w
-                    const y2 = y + h
-
-                    ctx.beginPath()
-                    ctx.moveTo(x + radius, y)
-                    ctx.lineTo(x2 - radius, y)
-                    ctx.arcTo(x2, y, x2, y + radius, radius)
-                    ctx.lineTo(x2, y2 - radius)
-                    ctx.arcTo(x2, y2, x2 - radius, y2, radius)
-                    ctx.lineTo(x + radius, y2)
-                    ctx.arcTo(x, y2, x, y2 - radius, radius)
-                    ctx.lineTo(x, y + radius)
-                    ctx.arcTo(x, y, x + radius, y, radius)
-                    ctx.closePath()
-                }
-
-                function drawBars(ctx, peak) {
-                    const slots = sampleCount
-                    const slotWidth = width / Math.max(1, slots)
-                    const barWidth = Math.max(4, Math.min(16, slotWidth * 0.48))
-                    const maxHeight = Math.max(24, height * Math.min(0.96, 0.58 + veloraTheme.visualizerStrength * 0.38))
-                    const accent = accentColor()
-
-                    ctx.save()
-
-                    for (let slot = 0; slot < slots; slot += 1) {
-                        const unit = slots <= 1 ? 0 : slot / (slots - 1)
-                        const value = cavaValue(unit)
-                        const edgeFade = Math.min(1, slot / 5, (slots - 1 - slot) / 5)
-                        const barHeight = Math.max(0, Math.pow(value, 0.72) * maxHeight * Math.max(0.28, veloraTheme.visualizerStrength) * edgeFade)
-
-                        if (barHeight < 1)
-                            continue
-
-                        const alpha = Math.min(0.52, 0.12 + value * 0.44) * edgeFade
-                        const xPos = Math.round(slot * slotWidth + (slotWidth - barWidth) / 2)
-                        const yPos = 0
-
-                        ctx.fillStyle = veloraTheme.alpha(accent, alpha)
-                        roundedBar(ctx, xPos, yPos, Math.round(barWidth), Math.max(1, Math.round(barHeight)), Math.max(2, barWidth * 0.42))
-                        ctx.fill()
-                    }
-
-                    ctx.restore()
-                }
-
-                function smoothWavePath(ctx, points) {
-                    if (points.length < 2)
-                        return
-
-                    ctx.lineTo(points[points.length - 1].x, points[points.length - 1].y)
-                    for (let i = points.length - 2; i >= 0; i -= 1) {
-                        const previous = points[i + 1]
-                        const current = points[i]
-                        ctx.quadraticCurveTo(previous.x, previous.y, (previous.x + current.x) / 2, (previous.y + current.y) / 2)
-                    }
-                    ctx.lineTo(points[0].x, points[0].y)
-                }
-
-                function drawIntegratedWave(ctx, peak) {
-                    const accent = accentColor()
-                    const points = []
-                    const edgeInset = 0
-                    const drawWidth = Math.max(1, width - edgeInset * 2)
-                    const baseDrop = Math.max(6, Math.min(12, height * 0.14))
-                    const maxAmp = Math.max(18, height - baseDrop - 8)
-
-                    for (let slot = 0; slot < sampleCount; slot += 1) {
-                        const unit = sampleCount <= 1 ? 0 : slot / (sampleCount - 1)
-                        const value = cavaValue(unit)
-                        const edgeFade = Math.max(0.34, Math.min(1, slot / 7, (sampleCount - 1 - slot) / 7))
-                        const pulse = 0.88 + Math.sin(slot * 0.57) * 0.08
-                        const force = Math.max(0.74, Math.min(1.10, veloraTheme.visualizerStrength * 1.08))
-                        const yPos = Math.min(height - 2, baseDrop + Math.pow(value, 0.62) * maxAmp * force * edgeFade * pulse)
-
-                        points.push({
-                            x: edgeInset + unit * drawWidth,
-                            y: yPos
-                        })
-                    }
-
-                    ctx.save()
-                    ctx.lineCap = "round"
-                    ctx.lineJoin = "round"
-
-                    var fill = root.topBarRailMaterialColor()
-                    if (veloraTheme.visualizerGradientEnabled) {
-                        fill = ctx.createLinearGradient(0, 0, width, 0)
-                        fill.addColorStop(0.0, root.topBarRailMaterialColor())
-                        fill.addColorStop(0.50, veloraTheme.alpha(accent, Math.min(0.20, 0.07 + peak * 0.18)))
-                        fill.addColorStop(1.0, root.topBarRailMaterialColor())
-                    }
-
-                    ctx.fillStyle = fill
-                    ctx.beginPath()
-                    ctx.moveTo(edgeInset, 0)
-                    ctx.lineTo(width - edgeInset, 0)
-                    smoothWavePath(ctx, points)
-                    ctx.lineTo(edgeInset, 0)
-                    ctx.closePath()
-                    ctx.fill()
-
-                    if (peak >= 0.030) {
-                        ctx.strokeStyle = veloraTheme.alpha(accent, Math.min(0.58, 0.20 + peak * 0.52))
-                        ctx.lineWidth = 1.1
-                        ctx.beginPath()
-                        ctx.moveTo(points[0].x, points[0].y)
-                        for (let i = 1; i < points.length; i += 1) {
-                            const previous = points[i - 1]
-                            const current = points[i]
-                            ctx.quadraticCurveTo(previous.x, previous.y, (previous.x + current.x) / 2, (previous.y + current.y) / 2)
-                        }
-                        ctx.lineTo(points[points.length - 1].x, points[points.length - 1].y)
-                        ctx.stroke()
-                    }
-
-                    ctx.restore()
-                }
-
-                function drawPixelBars(ctx, peak) {
-                    const cell = Math.max(3, Math.min(12, Math.round(veloraTheme.visualizerPixelSize)))
-                    const gap = Math.max(1, Math.round(cell * 0.30))
-                    const slots = Math.max(24, Math.min(96, Math.floor((width + gap) / (cell + gap * 2))))
-                    const maxRows = Math.max(1, Math.floor((height * 0.96 + gap) / (cell + gap)))
-                    const accent = accentColor()
-
-                    for (let slot = 0; slot < slots; slot += 1) {
-                        const unit = slots <= 1 ? 0 : slot / (slots - 1)
-                        const value = cavaValue(unit)
-                        const edgeFade = Math.min(1, slot / 5, (slots - 1 - slot) / 5)
-                        const activeRows = peak >= 0.025
-                            ? Math.min(maxRows, Math.max(1, Math.ceil(Math.pow(value, 0.72) * maxRows * Math.max(0.28, veloraTheme.visualizerStrength) * edgeFade)))
-                            : 0
-                        const xPos = Math.round(slot * (width / Math.max(1, slots)) + (width / Math.max(1, slots) - cell) / 2)
-
-                        for (let row = 0; row < activeRows; row += 1) {
-                            const rowFade = 1 - row / Math.max(1, maxRows) * 0.34
-                            const alpha = Math.min(0.54, 0.12 + value * 0.44) * edgeFade * rowFade
-                            const yPos = row * (cell + gap)
-
-                            if (yPos + cell > height)
-                                continue
-
-                            ctx.fillStyle = veloraTheme.alpha(accent, alpha)
-                            ctx.fillRect(xPos, Math.round(yPos), cell, cell)
-                        }
-                    }
-                }
-
-                onPaint: {
-                    const ctx = getContext("2d")
-                    var peak = 0
-
-                    ctx.clearRect(0, 0, width, height)
-                    if (!activeForPaint)
-                        return
-
-                    for (let slot = 0; slot < sampleCount; slot += 1)
-                        peak = Math.max(peak, cavaValue(sampleCount <= 1 ? 0 : slot / (sampleCount - 1)))
-
-                    if (peak < 0.015)
-                        return
-
-                    if (pixelMode)
-                        drawPixelBars(ctx, peak)
-                    else
-                        drawIntegratedWave(ctx, peak)
-                }
-
-                Component.onCompleted: requestVisualizerPaint(true)
-                onWidthChanged: requestVisualizerPaint(true)
-                onHeightChanged: requestVisualizerPaint(true)
-                onActiveForPaintChanged: requestVisualizerPaint(true)
-                onPixelModeChanged: requestVisualizerPaint(true)
-
-                Timer {
-                    id: topBarUnderVisualizerPaintTimer
-
-                    interval: 16
-                    repeat: false
-                    onTriggered: {
-                        if (topBarUnderVisualizerCanvas.activeForPaint)
-                            topBarUnderVisualizerCanvas.requestPaint()
-                    }
-                }
-
-                Connections {
-                    target: root
-                    function onTopBarCavaValuesChanged() {
-                        if (root.topBarCenterVisualizerMounted)
-                            topBarUnderVisualizerCanvas.requestVisualizerPaint(false)
-                    }
-                    function onTopBarCenterVisualizerMountedChanged() { topBarUnderVisualizerCanvas.requestVisualizerPaint(true) }
-                    function onLayoutSwitchOpacityChanged() { topBarUnderVisualizerCanvas.requestVisualizerPaint(true) }
-                }
-
-                Connections {
-                    target: veloraTheme
-                    function onActiveTextChanged() { topBarUnderVisualizerCanvas.requestVisualizerPaint(true) }
-                    function onThemeModeChanged() { topBarUnderVisualizerCanvas.requestVisualizerPaint(true) }
-                    function onThemeIdChanged() { topBarUnderVisualizerCanvas.requestVisualizerPaint(true) }
-                    function onSidebarBorderGlowChanged() { topBarUnderVisualizerCanvas.requestVisualizerPaint(true) }
-                    function onVisualizerStrengthChanged() { topBarUnderVisualizerCanvas.requestVisualizerPaint(true) }
-                    function onVisualizerModeChanged() { topBarUnderVisualizerCanvas.requestVisualizerPaint(true) }
-                    function onVisualizerPixelSizeChanged() { topBarUnderVisualizerCanvas.requestVisualizerPaint(true) }
-                    function onVisualizerGradientEnabledChanged() { topBarUnderVisualizerCanvas.requestVisualizerPaint(true) }
-                }
-            }
-        }
-    }
-
-    // Keep the central wallpaper selector below all bars. Its own translucent
-    // backdrop is blurred by Hyprland, while the Overlay bars remain sharp.
+    // The selector shares the lock's native clear lens, below the overlay bars.
     Variants {
         model: root.topWallpaperUsesCenterSelector && root.topWallpaperMounted && !root.shellSuppressedByFullscreen ? Quickshell.screens : []
 
@@ -5933,7 +5258,33 @@ Scope {
 
             WlrLayershell.layer: WlrLayer.Top
             WlrLayershell.namespace: "velora-wallpaper-selector"
+            BackgroundEffect.blurRegion: Region {}
             WlrLayershell.keyboardFocus: root.topWallpaperKeyboardFocus ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+
+            property bool glassDirty: true
+            function syncGlass() {
+                const rect = wallpaperLayerCarousel.glassRect
+                const fields = [modelData.name, wallpaperLayerCarousel.glassEnabled ? 1 : 0,
+                    (wallpaperLayerCarousel.x + rect.x) / width,
+                    (wallpaperLayerCarousel.y + rect.y) / height,
+                    rect.width / width, rect.height / height,
+                    wallpaperLayerCarousel.glassRadius / width,
+                    root.topWallpaperFrameReveal]
+                Platform.NativeBlur.dispatch("velora-blur:selector-shape " + fields.join(" "))
+            }
+            FrameAnimation {
+                running: wallpaperSelectorPanel.glassDirty
+                onTriggered: {
+                    wallpaperSelectorPanel.glassDirty = false
+                    wallpaperSelectorPanel.syncGlass()
+                }
+            }
+            Connections {
+                target: root.composition
+                function onOpticsGenerationChanged() { wallpaperSelectorPanel.glassDirty = true }
+            }
+            Component.onDestruction: Platform.NativeBlur.dispatch("velora-blur:selector-shape "
+                + modelData.name + " 0 0 0 0 0 0 0")
 
             anchors {
                 top: true
@@ -5949,6 +5300,8 @@ Scope {
 
             VeloraWallpaperCarousel {
                 id: wallpaperLayerCarousel
+                Component.onCompleted: root.wallpaperSelectorViews[wallpaperSelectorPanel.modelData.name] = wallpaperLayerCarousel
+                Component.onDestruction: delete root.wallpaperSelectorViews[wallpaperSelectorPanel.modelData.name]
 
                 readonly property int frameClearance: root.frameVisualsMounted ? 2 : 0
 
@@ -5960,9 +5313,16 @@ Scope {
                 clip: true
                 visible: root.topWallpaperPopupOpen || root.topWallpaperFrameReveal > 0.01
                 theme: veloraTheme
-                blurStrength: veloraTheme.wallpaperSelectorBlur
+                motion: root.composition.motionTokens
+                reducedMotion: root.composition ? root.composition.reducedMotion : false
+                glassEnabled: root.composition.wallpaperSelectorGlassEnabled
+                onGlassEnabledChanged: wallpaperSelectorPanel.glassDirty = true
                 open: root.topWallpaperPopupOpen
                 revealProgress: root.topWallpaperFrameReveal
+                onGlassRectChanged: wallpaperSelectorPanel.glassDirty = true
+                onRevealProgressChanged: wallpaperSelectorPanel.glassDirty = true
+                onXChanged: wallpaperSelectorPanel.glassDirty = true
+                onYChanged: wallpaperSelectorPanel.glassDirty = true
                 entries: root.topWallpaperEntries
                 selectedIndex: root.topWallpaperOffset
                 slideDirection: root.topWallpaperSlideDirection
@@ -6004,703 +5364,7 @@ Scope {
         }
     }
 
-    Variants {
-        model: veloraTheme.topBarEnabled && !root.shellSuppressedByFullscreen ? Quickshell.screens : []
 
-        PanelWindow {
-            id: topBarPanel
-
-            required property var modelData
-            readonly property int panelWidth: modelData.width > 0 ? modelData.width : 1920
-            readonly property int panelHeight: modelData.height > 0 ? modelData.height : 1200
-            readonly property int topMargin: root.topBarPanelTopMargin(panelHeight)
-            readonly property int barHeight: root.topBarPanelHeight(panelHeight)
-            readonly property int stageWidth: root.topBarPanelStageWidth(panelWidth)
-            readonly property int popupWidth: root.topBarQuickPopupPanelVisible
-                ? (rightControlCenterPopup
-                    ? Math.min(500, Math.max(360, panelWidth * 0.194))
-                    : root.topBarQuickPopupWidth(root.visibleQuickPopupType))
-                : 0
-            readonly property int popupHeight: root.topBarQuickPopupPanelVisible
-                ? (rightControlCenterPopup
-                    ? Math.min(1030, Math.max(750, panelHeight * 0.705))
-                    : root.topBarQuickPopupHeight(root.visibleQuickPopupType))
-                : 0
-            readonly property int popupLeftBleed: 0
-            readonly property int popupGap: 12
-            readonly property bool legacyQuickSettingsPopup: root.visibleQuickPopupType === "quickSettings" || root.visibleQuickPopupType === "settingsQuick"
-            readonly property bool rightControlCenterPopup: root.visibleQuickPopupType === "system"
-                && root.topBarSystemPage === "settings"
-                && veloraTheme.controlCenterPosition === "right"
-            readonly property real popupAnchorX: root.topBarPopupCenterX > 0 ? root.topBarPopupCenterX : root.mainAreaX(panelWidth) + root.mainAreaWidth(panelWidth) / 2
-            readonly property int attachedPopupY: topBar.y + topBar.height + popupGap
-            readonly property int attachedPopupX: Math.round(Math.max(root.mainAreaX(panelWidth) + 12, Math.min(root.mainAreaX(panelWidth) + root.mainAreaWidth(panelWidth) - popupWidth - 12, popupAnchorX - popupWidth / 2)))
-            readonly property bool unifiedSystemPopup: root.visibleQuickPopupType === "system"
-            readonly property bool bottomSheetPopup: (unifiedSystemPopup && !rightControlCenterPopup) || root.visibleQuickPopupType === "search"
-            readonly property int popupY: rightControlCenterPopup
-                ? Math.max(topBar.y + topBar.height + 24, Math.round((panelHeight - popupHeight) / 2))
-                : (bottomSheetPopup
-                ? Math.max(topBar.y + topBar.height + 18, panelHeight - popupHeight)
-                : (legacyQuickSettingsPopup ? root.quickPopupY(root.visibleQuickPopupType, popupHeight, panelHeight) : attachedPopupY)
-                )
-            readonly property int popupX: rightControlCenterPopup
-                ? Math.round(root.mainAreaX(panelWidth) + root.mainAreaWidth(panelWidth) - popupWidth)
-                : (bottomSheetPopup
-                ? Math.round(root.mainAreaX(panelWidth) + (root.mainAreaWidth(panelWidth) - popupWidth) / 2)
-                : (legacyQuickSettingsPopup ? root.quickPopupX(root.visibleQuickPopupType, panelWidth, popupWidth) : attachedPopupX)
-                )
-            readonly property int popupWindowWidth: popupWidth + popupLeftBleed
-            readonly property int popupWindowX: popupX - popupLeftBleed
-            property var topBarCavaValues: []
-            property int topBarCavaSettledFrames: 0
-            property int topBarCavaSkippedFrames: 0
-            readonly property int topBarCavaBandCount: 96
-            // 30 FPS remains visually fluid while halving scene-graph wakeups;
-            // audio capture and smoothing stay native and independent.
-            readonly property int topBarCavaFps: 30
-            readonly property int topBarGlavaReferenceHeight: Math.max(
-                12,
-                Math.min(
-                    barHeight - 5,
-                    Math.round(
-                        18 + veloraTheme.visualizerStrength * 28
-                    )
-                )
-            )
-            readonly property real topBarCavaSettledDelta: 0.0025
-            readonly property int topBarCavaSettleFrameThreshold: 2
-            readonly property int topBarCavaMaxSkippedFrames: 2
-            // Spectrum capture and rendering live in Velora.Native. Keeping
-            // this false prevents text IPC and JavaScript array fan-out.
-            readonly property bool topBarCavaWanted: false
-            readonly property string topBarCavaScript: Quickshell.shellDir + "/scripts/velora-glava-spectrum"
-
-            function syncTopBarCavaProcess() {
-                if (topBarCavaWanted) {
-                    if (!topBarCavaProcess.running)
-                        topBarCavaProcess.running = true
-                    return
-                }
-
-                topBarCavaRestartTimer.stop()
-                if (topBarCavaProcess.running)
-                    topBarCavaProcess.running = false
-                topBarCavaValues = []
-                root.topBarCavaValues = []
-                topBarCavaSettledFrames = 0
-                topBarCavaSkippedFrames = 0
-            }
-
-            function parseTopBarCavaLine(data) {
-                var text = String(data || "")
-                text = text.replace(/\x1b\][^\x07]*\x07/g, "")
-                const parts = text.split(";")
-                var next = []
-
-                for (var i = 0; i < parts.length; ++i) {
-                    const raw = parts[i].trim()
-                    if (raw.length <= 0)
-                        continue
-
-                    const parsed = parseInt(raw)
-                    if (!isNaN(parsed))
-                        next.push(Math.max(0, Math.min(1, parsed / 1000)))
-                }
-
-                if (next.length <= 0)
-                    return
-
-                while (next.length > topBarCavaBandCount)
-                    next.shift()
-
-                while (next.length < topBarCavaBandCount)
-                    next.push(0)
-
-                const previous = topBarCavaValues || []
-                if (previous.length === next.length) {
-                    var maxDelta = 0
-                    for (var j = 0; j < next.length; ++j)
-                        maxDelta = Math.max(maxDelta, Math.abs(Number(previous[j]) - next[j]))
-
-                    if (maxDelta < topBarCavaSettledDelta) {
-                        topBarCavaSettledFrames += 1
-                        if (topBarCavaSettledFrames >= topBarCavaSettleFrameThreshold
-                                && topBarCavaSkippedFrames < topBarCavaMaxSkippedFrames) {
-                            topBarCavaSkippedFrames += 1
-                            return
-                        }
-                    } else {
-                        topBarCavaSettledFrames = 0
-                    }
-                } else {
-                    topBarCavaSettledFrames = 0
-                }
-
-                topBarCavaSkippedFrames = 0
-                topBarCavaValues = next
-                root.topBarCavaValues = next
-            }
-
-            onTopBarCavaWantedChanged: syncTopBarCavaProcess()
-
-            screen: modelData
-            color: "transparent"
-            implicitWidth: panelWidth
-            implicitHeight: panelHeight
-            exclusiveZone: 0
-            exclusionMode: ExclusionMode.Ignore
-            focusable: root.quickPopupType === "search"
-                || root.quickPopupType === "apps"
-                || root.quickPopupType === "agenda"
-                || root.quickPopupType === "weatherPanel"
-
-            WlrLayershell.layer: WlrLayer.Overlay
-            WlrLayershell.namespace: "velora-topbar"
-            WlrLayershell.keyboardFocus: root.quickPopupType === "search"
-                || root.quickPopupType === "apps"
-                ? WlrKeyboardFocus.Exclusive
-                : (root.quickPopupType === "agenda"
-                        || root.quickPopupType === "weatherPanel"
-                    ? WlrKeyboardFocus.OnDemand
-                    : WlrKeyboardFocus.None)
-
-            anchors {
-                top: true
-                left: true
-                right: true
-            }
-
-            mask: Region {
-                Region {
-                    item: topBarVisualizerMask
-                    radius: Math.round(topBarVisualizerMask.height / 2)
-                }
-
-                Region {
-                    item: topBar.maskItem
-                    radius: 16
-                }
-
-                Region {
-                    item: topBarPopupInputMask
-                    radius: topBarPopupLoader.cornerRadius
-                }
-
-                Region {
-                    item: topBarPopupOutsideInputMask
-                    radius: 0
-                }
-            }
-
-            Item {
-                id: topBarVisualizerMask
-
-                x: 0
-                y: 0
-                width: 0
-                height: 0
-            }
-
-            Process {
-                id: topBarCavaProcess
-
-                running: false
-                command: [
-                    topBarPanel.topBarCavaScript,
-                    String(topBarPanel.topBarCavaBandCount),
-                    String(topBarPanel.topBarCavaFps),
-                    String(topBarPanel.topBarGlavaReferenceHeight)
-                ]
-
-                stdout: SplitParser {
-                    onRead: function(data) {
-                        topBarPanel.parseTopBarCavaLine(data)
-                    }
-                }
-
-                onExited: {
-                    running = false
-                    if (topBarPanel.topBarCavaWanted)
-                        topBarCavaRestartTimer.restart()
-                }
-            }
-
-            Timer {
-                id: topBarCavaRestartTimer
-
-                interval: 1600
-                repeat: false
-                onTriggered: {
-                    if (topBarPanel.topBarCavaWanted && !topBarCavaProcess.running)
-                        topBarCavaProcess.running = true
-                }
-            }
-
-            VeloraTopBar {
-                id: topBar
-
-                theme: veloraTheme
-                z: 2
-                activePopupType: root.activeQuickPopupType
-                activeSystemPage: root.topBarSystemPage
-                notificationCountOverride: root.notificationHistoryCount
-                cavaValues: topBarPanel.topBarCavaValues
-                width: topBarPanel.panelWidth
-                height: topBarPanel.barHeight
-                x: 0
-                y: topBarPanel.topMargin
-
-                onSearchRequested: function(centerX) {
-                    root.openAdaptiveBarPopup("search", topBar.x + centerX)
-                }
-                onThemeRequested: function(centerX) {
-                    root.toggleWallpaperSelector(root.defaultQuickPopupCenterY("theme"))
-                }
-                onSettingsRequested: function(centerX) {
-                    root.closeTopBarPopup()
-                    root.toggleSettingsPanel(root.defaultQuickPopupCenterY("settings"))
-                }
-                onLayoutRequested: function(centerX) {
-                    root.closeTopBarPopup()
-                    root.cycleBarLayout()
-                }
-                onQuickPopupRequested: function(type, centerX) {
-                    root.openAdaptiveBarPopup(type, topBar.x + centerX)
-                }
-                onQuickPopupHovered: function(type, centerX) {
-                    root.previewAdaptiveBarPopup(type, topBar.x + centerX)
-                }
-                onQuickPopupHoverEnded: function(type) {
-                    root.endAdaptiveBarPopupHover(type)
-                }
-            }
-
-            Item {
-                id: topBarPopupInputMask
-
-                x: topBarPopupLoader.x
-                y: topBarPopupLoader.y
-                width: root.topBarQuickPopupPanelVisible ? topBarPopupLoader.width : 0
-                height: root.topBarQuickPopupPanelVisible ? topBarPopupLoader.height : 0
-            }
-
-            Item {
-                id: topBarPopupOutsideInputMask
-
-                x: 0
-                y: 0
-                readonly property bool capturesOutsideClick: topBarPanel.unifiedSystemPopup
-                    || topBarPanel.bottomSheetPopup
-                    || (root.quickPopupHoldOpen && (root.visibleQuickPopupType === "search" || root.visibleQuickPopupType === "apps"))
-                width: capturesOutsideClick ? topBarPanel.panelWidth : 0
-                height: capturesOutsideClick ? topBarPanel.panelHeight : 0
-                z: 1
-
-                MouseArea {
-                    anchors.fill: parent
-                    enabled: topBarPopupOutsideInputMask.capturesOutsideClick
-                    acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
-                    onClicked: root.closeQuickPopup()
-                }
-            }
-
-            VeloraAttachedSurface {
-                id: topBarPopupSurface
-
-                readonly property bool systemSurface: root.visibleQuickPopupType === "system"
-                readonly property real systemGlassAlpha: Math.min(
-                    topBarPanel.rightControlCenterPopup
-                        ? (veloraTheme.themeMode === "dark" ? 0.22 : 0.28)
-                        : (veloraTheme.themeMode === "dark" ? 0.30 : 0.36),
-                    veloraTheme.surfacePopup.a
-                )
-                readonly property color systemGlassStart: veloraTheme.mix(
-                    veloraTheme.surfacePopup,
-                    veloraTheme.accentPrimary,
-                    topBarPanel.rightControlCenterPopup ? 0.96 : 0.82,
-                    systemGlassAlpha
-                )
-                readonly property color systemGlassMiddle: veloraTheme.mix(
-                    veloraTheme.surfacePopup,
-                    veloraTheme.accentTertiary,
-                    topBarPanel.rightControlCenterPopup ? 0.84 : 0.64,
-                    Math.max(0, systemGlassAlpha - 0.02)
-                )
-                readonly property color systemGlassEnd: veloraTheme.mix(
-                    veloraTheme.surfacePopup,
-                    veloraTheme.accentSecondary,
-                    topBarPanel.rightControlCenterPopup ? 0.96 : 0.80,
-                    systemGlassAlpha
-                )
-
-                theme: veloraTheme
-                attachSide: topBarPanel.rightControlCenterPopup ? "right" : (topBarPanel.bottomSheetPopup ? "bottom" : "left")
-                useCustomGlass: true
-                customGlass: systemSurface
-                    ? systemGlassMiddle
-                    : veloraTheme.surfacePopup
-                useCustomGradient: systemSurface
-                gradientStartColor: systemGlassStart
-                gradientMiddleColor: systemGlassMiddle
-                gradientEndColor: systemGlassEnd
-                gradientStartX: 0
-                gradientStartY: 0
-                gradientEndX: 1
-                gradientEndY: 1
-                animateCustomGradient: systemSurface
-                gradientAnimationDuration: 8200
-                outwardMold: systemSurface
-                lineReveal: true
-                transitionContrast: systemSurface
-                    ? 0
-                    : (root.quickPopupSurfaceReveal < 0.98 ? 0.30 : 0.12)
-                x: systemSurface && attachSide === "bottom"
-                    ? topBarPopupLoader.visualX - moldBleed
-                    : topBarPopupLoader.visualX
-                y: systemSurface && attachSide === "right"
-                    ? topBarPopupLoader.visualY - moldBleed
-                    : topBarPopupLoader.visualY
-                width: topBarPopupLoader.visualWidth
-                    + (systemSurface && attachSide === "bottom" ? moldBleed * 2 : 0)
-                height: topBarPopupLoader.visualHeight
-                    + (systemSurface && attachSide === "right"
-                        ? moldBleed * 2
-                        : ((!systemSurface && topBarPanel.bottomSheetPopup) ? radius : 0))
-                radius: topBarPopupLoader.cornerRadius
-                revealProgress: root.visibleQuickPopupType === "system" ? 1 : root.quickPopupSurfaceReveal
-                visible: root.topBarQuickPopupPanelVisible && topBarPopupLoader.contentReady
-                z: 8
-            }
-
-            Item {
-                id: topBarPopupLoader
-
-                property int cacheGeneration: 0
-                readonly property bool active: root.topBarQuickPopupPanelVisible || (root.topBarLayout && root.quickPopupPreloadEnabled)
-                readonly property int targetWidth: topBarPanel.popupWindowWidth
-                readonly property int targetHeight: topBarPanel.popupHeight
-                readonly property int targetX: topBarPanel.popupWindowX
-                readonly property int targetY: topBarPanel.popupY
-                readonly property int geometryDuration: Math.max(180, veloraTheme.motionPanelGeometry)
-                // System categories have deliberately different dimensions. Keep the
-                // logical input region atomic while a dedicated visual viewport morphs
-                // the sheet surface and preserves both transition pages without cuts.
-                readonly property bool atomicSystemGeometry: root.topBarQuickPopupPanelVisible
-                    && root.visibleQuickPopupType === "system"
-                readonly property var currentPopupItem: {
-                    cacheGeneration
-                    return itemForType(root.visibleQuickPopupType)
-                }
-                readonly property bool systemTransitioning: atomicSystemGeometry
-                    && currentPopupItem
-                    && Boolean(currentPopupItem.systemTransitionRunning)
-                readonly property real visualWidth: atomicSystemGeometry
-                    && currentPopupItem
-                    && Number(currentPopupItem.effectiveSystemVisualWidth) > 0
-                    ? Number(currentPopupItem.effectiveSystemVisualWidth)
-                    : width
-                readonly property real visualHeight: atomicSystemGeometry
-                    && currentPopupItem
-                    && Number(currentPopupItem.effectiveSystemVisualHeight) > 0
-                    ? Number(currentPopupItem.effectiveSystemVisualHeight)
-                    : height
-                readonly property real visualX: x + (width - visualWidth) / 2
-                readonly property real visualY: topBarPanel.rightControlCenterPopup
-                    ? Math.max(
-                        topBar.y + topBar.height + 24,
-                        Math.round((topBarPanel.panelHeight - visualHeight) / 2)
-                    )
-                    : y + height - visualHeight
-                readonly property int fadeInDuration: Math.max(130, Math.round(veloraTheme.motionPanelIn * 0.72))
-                readonly property int switchFadeOutDuration: Math.max(120, Math.round(veloraTheme.motionPanelOut * 0.72))
-                readonly property int closeFadeOutDuration: Math.max(160, root.quickPopupLineCloseDuration)
-                readonly property int cornerRadius: {
-                    cacheGeneration
-                    const popup = itemForType(root.visibleQuickPopupType)
-                    return popup ? popup.cornerRadius : 13
-                }
-                readonly property real revealProgress: root.quickPopupSurfaceReveal
-                readonly property bool contentReady: {
-                    cacheGeneration
-                    if (!root.topBarQuickPopupPanelVisible || root.visibleQuickPopupType.length <= 0)
-                        return false
-                    return itemForType(root.visibleQuickPopupType) !== null
-                }
-
-                z: 9
-                width: targetWidth
-                height: targetHeight
-                x: targetX + (root.visibleQuickPopupType === "system" ? root.systemSheetOffsetX : 0)
-                y: targetY + (root.visibleQuickPopupType === "system" ? root.systemSheetOffsetY : 0)
-                visible: root.topBarQuickPopupPanelVisible
-                // The animated viewport performs the visible clipping. Temporarily
-                // allow it to retain the larger outgoing geometry when the logical
-                // input region has already snapped to a smaller target page.
-                clip: !systemTransitioning
-                focus: root.quickPopupType === "search"
-                    || root.quickPopupType === "apps"
-
-                Keys.priority: Keys.BeforeItem
-                Keys.onPressed: function(event) {
-                    if (root.quickPopupType !== "system")
-                        return
-                    if (event.key === Qt.Key_Left) {
-                        root.moveTopBarSystemPage(-1)
-                        event.accepted = true
-                    } else if (event.key === Qt.Key_Right) {
-                        root.moveTopBarSystemPage(1)
-                        event.accepted = true
-                    } else if (event.key === Qt.Key_Escape) {
-                        root.closeQuickPopup()
-                        event.accepted = true
-                    }
-                }
-
-                onFocusChanged: {
-                    if (focus && (root.quickPopupType === "search"
-                            || root.quickPopupType === "apps")) {
-                        forceActiveFocus(Qt.ShortcutFocusReason)
-                    }
-                }
-
-                onActiveChanged: if (!active) root.quickPopupHovering = false
-
-                function itemForType(type) {
-                    const index = root.topBarQuickPopupIndex(type)
-                    if (index < 0 || typeof topBarQuickPopupCache === "undefined")
-                        return null
-
-                    const loader = topBarQuickPopupCache.itemAt(index)
-                    return loader && loader.item ? loader.item : null
-                }
-
-                function opacityTransitionDuration(showing) {
-                    if (showing)
-                        return fadeInDuration
-                    return root.quickPopupVisible ? switchFadeOutDuration : closeFadeOutDuration
-                }
-
-                Repeater {
-                    id: topBarQuickPopupCache
-
-                    model: root.topBarCachedQuickPopupTypes
-
-                    Loader {
-                        id: topBarPopupCacheLoader
-
-                        property string cacheType: String(modelData)
-                        readonly property bool showing: root.quickPopupVisible && root.visibleQuickPopupType === cacheType
-                        readonly property bool closing: !root.quickPopupVisible && root.quickPopupWindowOpen && root.visibleQuickPopupType === cacheType
-
-                        active: showing
-                            || closing
-                            || opacity > 0.001
-                            || (root.quickPopupPreloadEnabled && root.topBarQuickPopupIndex(cacheType) < root.quickPopupPreloadCount)
-                        asynchronous: false
-                        visible: root.topBarQuickPopupPanelVisible && (showing || closing || opacity > 0.001)
-                        opacity: cacheType === "system"
-                            ? ((showing || closing) ? 1 : 0)
-                            : (showing ? 1 : 0)
-                        x: Math.round((topBarPopupLoader.width - width) / 2)
-                        y: Math.round((topBarPopupLoader.height - height) / 2)
-                        width: cacheType === "system" ? topBarPopupLoader.width : root.topBarQuickPopupWidth(cacheType)
-                        height: cacheType === "system" ? topBarPopupLoader.height : root.topBarQuickPopupHeight(cacheType)
-                        z: showing ? 2 : 1
-
-                        Behavior on opacity {
-                            enabled: cacheType !== "system" && veloraTheme.motionEnabled && topBarPopupLoader.active
-                            NumberAnimation {
-                                duration: topBarPopupLoader.opacityTransitionDuration(topBarPopupCacheLoader.showing)
-                                easing.type: topBarPopupCacheLoader.showing ? veloraTheme.motionEaseEnter : veloraTheme.motionEaseExit
-                            }
-                        }
-
-                        onLoaded: {
-                            topBarPopupLoader.cacheGeneration += 1
-                            if (cacheType === "system" && item
-                                    && Number(item.preferredWidth) > 0
-                                    && Number(item.preferredHeight) > 0) {
-                                root.topBarSystemPopupPreferredPage = root.topBarSystemPage
-                                root.topBarSystemPopupPreferredWidth = Math.round(Number(item.preferredWidth))
-                                root.topBarSystemPopupPreferredHeight = Math.round(Number(item.preferredHeight))
-                            }
-                            if ((cacheType === "apps" || cacheType === "search") && root.quickPopupType === cacheType)
-                                root.scheduleSearchPopupFocus()
-                        }
-
-                        sourceComponent: cacheType === "quickSettings" || cacheType === "settingsQuick" || cacheType === "search"
-                            ? legacyQuickSettingsComponent
-                            : modernTopBarPopupComponent
-
-                        Component {
-                            id: legacyQuickSettingsComponent
-
-                            VeloraSidePopup {
-                                theme: veloraTheme
-                                externalSurface: true
-                                lineReveal: true
-                                warmSwitch: root.quickPopupSurfaceReveal > 0.35
-                                revealProgressOverride: root.quickPopupSurfaceReveal
-                                attachSide: topBarPopupCacheLoader.cacheType === "search" ? "bottom" : "left"
-                                popupType: topBarPopupCacheLoader.cacheType
-                                notificationsModelOverride: notificationHistoryModel
-                                open: topBarPopupCacheLoader.showing
-                                interactiveFocus: topBarPopupCacheLoader.cacheType === "search"
-                                width: topBarPopupCacheLoader.width
-                                height: topBarPopupCacheLoader.height
-                                visible: topBarPopupCacheLoader.visible
-                                onHoldOpenChanged: root.setQuickPopupHoldOpen(topBarPopupCacheLoader.cacheType, holdOpen)
-                                onOpenChanged: {
-                                    if (!open && topBarPopupCacheLoader.cacheType === "search")
-                                        root.setQuickPopupHoldOpen(topBarPopupCacheLoader.cacheType, false)
-                                }
-                                onCloseRequested: root.closeQuickPopup()
-                                onAdvancedSettingsRequested: {
-                                    root.closeQuickPopup()
-                                    root.toggleSettingsPanel(root.defaultQuickPopupCenterY("settings"), true)
-                                }
-                                onPopupRequested: function(type) {
-                                    root.openAdaptiveBarPopup(type, root.defaultTopBarPopupCenterX(type))
-                                }
-                                onPointerInsideChanged: function(inside) {
-                                    root.quickPopupHovering = inside
-                                    if (inside)
-                                        hoverCloseTimer.stop()
-                                    else if (root.hoverPopupType.length > 0)
-                                        root.scheduleHoverClose()
-                                }
-                            }
-                        }
-
-                        Component {
-                            id: modernTopBarPopupComponent
-
-                            VeloraTopBarPopup {
-                                theme: veloraTheme
-                                availableWidth: topBarPanel.panelWidth
-                                availableHeight: topBarPanel.panelHeight
-                                lineReveal: true
-                                warmSwitch: root.quickPopupSurfaceReveal > 0.35
-                                revealProgressOverride: root.quickPopupSurfaceReveal
-                                attachSide: "left"
-                                popupType: topBarPopupCacheLoader.cacheType
-                                systemPage: root.topBarSystemPage
-                                systemSlideDirection: root.topBarSystemSlideDirection
-                                notificationsModelOverride: notificationHistoryModel
-                                cavaValues: topBarPanel.topBarCavaValues
-                                wallpaperEntries: root.topWallpaperControlCenterEntries()
-                                wallpaperActiveKey: root.topWallpaperActiveKey
-                                wallpaperApplying: topWallpaperApply.running
-                                wallpaperErrorMessage: root.topWallpaperErrorMessage
-                                lyricsAvailable: root.lyricsAvailable
-                                lyricsContextLines: root.lyricsContextLines
-                                lyricsReason: root.lyricsReason
-                                lyricsWords: root.lyricsWords
-                                lyricsActiveIndex: root.lyricsActiveIndex
-                                lyricsTimingMode: root.lyricsTimingMode
-                                open: topBarPopupCacheLoader.showing
-                                interactiveFocus: root.quickPopupType === topBarPopupCacheLoader.cacheType
-                                    && (topBarPopupCacheLoader.cacheType === "search" || topBarPopupCacheLoader.cacheType === "apps" || topBarPopupCacheLoader.cacheType === "agenda" || topBarPopupCacheLoader.cacheType === "weatherPanel")
-                                width: topBarPopupCacheLoader.width
-                                height: topBarPopupCacheLoader.height
-                                visible: topBarPopupCacheLoader.visible
-                                onHoldOpenChanged: root.setQuickPopupHoldOpen(topBarPopupCacheLoader.cacheType, holdOpen)
-                                onOpenChanged: {
-                                    if (!open && (topBarPopupCacheLoader.cacheType === "search" || topBarPopupCacheLoader.cacheType === "apps"))
-                                        root.setQuickPopupHoldOpen(topBarPopupCacheLoader.cacheType, false)
-                                }
-                                onCloseRequested: root.closeQuickPopup()
-                                onAdvancedSettingsRequested: {
-                                    root.closeQuickPopup()
-                                    root.toggleSettingsPanel(root.defaultQuickPopupCenterY("settings"), true)
-                                }
-                                onSystemPageRequested: function(page) {
-                                    root.topBarSystemSlideDirection = root.topBarSystemPageIndex(page) >= root.topBarSystemPageIndex(root.topBarSystemPage) ? 1 : -1
-                                    root.topBarSystemPage = page
-                                }
-                                onSystemPageStepRequested: function(direction) {
-                                    root.moveTopBarSystemPage(direction)
-                                }
-                                onNotificationActivated: function(notificationId) {
-                                    root.invokeNotificationHistoryAction(notificationId, "default")
-                                }
-                                onNotificationDismissRequested: function(notificationId) {
-                                    root.dismissNotificationHistory(notificationId)
-                                }
-                                onNotificationActionRequested: function(notificationId, actionIdentifier) {
-                                    root.invokeNotificationHistoryAction(notificationId, actionIdentifier)
-                                }
-                                onNotificationsClearRequested: root.clearTrackedNotificationHistory()
-                                onWallpaperApplyRequested: function(entry) {
-                                    root.applyTopWallpaperSelection(entry)
-                                }
-                                onWallpaperLibraryRequested: function(refresh) {
-                                    root.ensureTopWallpaperLibraryLoaded(refresh)
-                                }
-                                onPreferredGeometryChanged: {
-                                    const nextWidth = Math.round(Number(preferredWidth))
-                                    const nextHeight = Math.round(Number(preferredHeight))
-                                    if (topBarPopupCacheLoader.cacheType === "system"
-                                            && nextWidth > 0
-                                            && nextHeight > 0) {
-                                        root.topBarSystemPopupPreferredPage = systemPage
-                                        root.topBarSystemPopupPreferredWidth = nextWidth
-                                        root.topBarSystemPopupPreferredHeight = nextHeight
-                                    }
-                                    topBarPopupLoader.cacheGeneration += 1
-                                }
-                                onPopupRequested: function(type) {
-                                    root.openAdaptiveBarPopup(type, root.defaultTopBarPopupCenterX(type))
-                                }
-                                onPointerInsideChanged: {
-                                    const inside = pointerInside
-                                    root.quickPopupHovering = inside
-                                    if (inside)
-                                        hoverCloseTimer.stop()
-                                    else if (root.hoverPopupType.length > 0)
-                                        root.scheduleHoverClose()
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Keys.onEscapePressed: root.closeQuickPopup()
-
-                Behavior on x {
-                    enabled: veloraTheme.motionEnabled && topBarPopupLoader.active && !topBarPopupLoader.atomicSystemGeometry
-                    NumberAnimation {
-                        duration: topBarPopupLoader.geometryDuration
-                        easing.type: veloraTheme.motionEaseEnter
-                    }
-                }
-
-                Behavior on y {
-                    enabled: veloraTheme.motionEnabled && topBarPopupLoader.active && !topBarPopupLoader.atomicSystemGeometry
-                    NumberAnimation {
-                        duration: topBarPopupLoader.geometryDuration
-                        easing.type: veloraTheme.motionEaseEnter
-                    }
-                }
-
-                Behavior on width {
-                    enabled: veloraTheme.motionEnabled && topBarPopupLoader.active && !topBarPopupLoader.atomicSystemGeometry
-                    NumberAnimation {
-                        duration: topBarPopupLoader.geometryDuration
-                        easing.type: veloraTheme.motionEaseEnter
-                    }
-                }
-
-                Behavior on height {
-                    enabled: veloraTheme.motionEnabled && topBarPopupLoader.active && !topBarPopupLoader.atomicSystemGeometry
-                    NumberAnimation {
-                        duration: topBarPopupLoader.geometryDuration
-                        easing.type: veloraTheme.motionEaseEnter
-                    }
-                }
-            }
-        }
-    }
 
     Variants {
         model: root.systemPopupKeyboardFocus
@@ -8574,8 +7238,8 @@ Scope {
             id: panel
 
             required property var modelData
-            readonly property int panelWidth: modelData.width > 0 ? modelData.width : 1920
-            readonly property int panelHeight: modelData.height > 0 ? modelData.height : 1200
+            readonly property int panelWidth: width
+            readonly property int panelHeight: height
             readonly property bool weatherTopSearchMode: root.weatherTopMode === "search"
             readonly property bool weatherTopConversationExpanded: false
             readonly property bool weatherTopNotificationAttached: root.weatherTopWindowOpen && root.notificationToastMounted
@@ -8594,11 +7258,11 @@ Scope {
             readonly property int weatherTopTargetY: root.weatherTopOpen ? weatherTopOpenY : -weatherTopTargetHeight - 18
             readonly property int weatherTopCornerRadius: 24
             property var activeRailSystemPopover: null
-            readonly property bool wantsDrawerKeyboard: coffeePopover.mounted || notesPopover.mounted || bluetoothPopover.mounted || notificationsPopover.mounted || wifiPopover.mounted || root.focusMode || root.quickPopupType === "search" || root.quickPopupType === "agenda" || root.quickPopupType === "weatherPanel" || root.settingsPanelOpen || root.wallpaperSelectorOpen || (root.topWallpaperKeyboardFocus && root.topWallpaperUsesBottomSelector) || (!root.topBarLayout && root.weatherTopKeyboardFocus) || root.leftMenuInteractiveFocus
+            readonly property bool wantsDrawerKeyboard: mediaPopover.mounted || coffeePopover.mounted || notesPopover.mounted || bluetoothPopover.mounted || notificationsPopover.mounted || wifiPopover.mounted || root.focusMode || root.quickPopupType === "search" || root.quickPopupType === "agenda" || root.quickPopupType === "weatherPanel" || root.settingsPanelOpen || root.wallpaperSelectorOpen || (root.topWallpaperKeyboardFocus && root.topWallpaperUsesBottomSelector) || (!root.topBarLayout && root.weatherTopKeyboardFocus) || root.leftMenuInteractiveFocus
 
             screen: modelData
             color: "transparent"
-            implicitWidth: panelWidth
+            implicitWidth: Math.max(1, modelData.width)
             exclusiveZone: root.barReserveWidth
             exclusionMode: ExclusionMode.Normal
             focusable: wantsDrawerKeyboard
@@ -8614,15 +7278,15 @@ Scope {
             // would leave an unpainted band behind the analog clock.
             BackgroundEffect.blurRegion: Region {
                 item: root.composition && root.composition.barBlurEnabled
-                    && root.composition.barMaterial === "glass" ? unifiedFrameCanvas : null
+                    && (root.composition.barMaterial === "glass" || !Platform.NativeBlur.supports("unified-bar-shape")) ? unifiedFrameCanvas : null
             }
 
             function syncUnifiedBarNativeShape() {
                 const active = root.composition
-                    && root.composition.barMaterial === "liquid"
+                    && (root.composition.barMaterial === "liquid" || root.composition.nativeBarMaterial)
                     && width > 0 && height > 0
                 if (!active) {
-                    Hyprland.dispatch("velora-blur:unified-bar-shape 0")
+                    Platform.NativeBlur.dispatch("velora-blur:unified-bar-shape " + modelData.name + " 0")
                     return
                 }
                 // Extend the vertical lens above this LayerShell surface.
@@ -8635,7 +7299,7 @@ Scope {
                 // rail, mirroring the clipped horizontal lens above.
                 const left = root.barOnRight
                     ? (width - root.sidebarVisualWidth) / width : -rail
-                Hyprland.dispatch("velora-blur:unified-bar-shape 1 "
+                Platform.NativeBlur.dispatch("velora-blur:unified-bar-shape " + modelData.name + " 1 "
                     + Number(left).toFixed(6) + " "
                     + Number(top).toFixed(6) + " "
                     + Number(rail * 2).toFixed(6) + " "
@@ -8650,9 +7314,15 @@ Scope {
                     + Number(railControls.nativePanel && railControls.nativePanel.extension ? railControls.nativePanel.extension.height / height : 0).toFixed(6))
             }
 
+            DesktopBarMaterial {
+                monitorName: panel.modelData.name
+                composition: root.composition
+                enabled: root.sideBarLayoutEnabled
+            }
+
             Component.onCompleted: Qt.callLater(syncUnifiedBarNativeShape)
             Component.onDestruction:
-                Hyprland.dispatch("velora-blur:unified-bar-shape 0")
+                Platform.NativeBlur.dispatch("velora-blur:unified-bar-shape " + modelData.name + " 0")
             onWidthChanged: Qt.callLater(syncUnifiedBarNativeShape)
             onHeightChanged: Qt.callLater(syncUnifiedBarNativeShape)
 
@@ -8928,7 +7598,10 @@ Scope {
                     ctx.lineTo(width, height)
                     ctx.lineTo(0, height)
                     ctx.closePath()
-                    ctx.fillStyle = root.sidebarBarMaterialColor()
+                    // Only this outline is supplied by the native material.
+                    // Other attached QML panels still need their own tint.
+                    ctx.fillStyle = root.composition && root.composition.nativeBarMaterial
+                        ? "transparent" : root.sidebarBarMaterialColor()
                     ctx.fill()
                     ctx.restore()
                 }
@@ -9278,6 +7951,11 @@ Scope {
                 }
                 function onOpticsGenerationChanged() {
                     panel.syncUnifiedBarNativeShape()
+                    unifiedFrameCanvas.requestPaint()
+                }
+                function onNativeBarMaterialChanged() {
+                    panel.syncUnifiedBarNativeShape()
+                    unifiedFrameCanvas.requestPaint()
                 }
                 function onBarWaveStrengthChanged() {
                     unifiedFrameCanvas.requestPaint()
@@ -10986,6 +9664,7 @@ Scope {
 
             VeloraRailCoffee {
                 id: coffeePopover
+                motion: root.composition.motionTokens
                 anchors.fill: parent
                 z: 12
                 enabled: root.sideBarLayoutEnabled && !!root.composition
@@ -10998,6 +9677,7 @@ Scope {
             }
             VeloraRailNotes {
                 id: notesPopover
+                motion: root.composition.motionTokens
                 anchors.fill: parent
                 z: 12
                 enabled: root.sideBarLayoutEnabled && !!root.composition
@@ -11010,6 +9690,7 @@ Scope {
             }
             VeloraRailBluetooth {
                 id: bluetoothPopover
+                motion: root.composition.motionTokens
                 anchors.fill: parent
                 z: 12
                 enabled: root.sideBarLayoutEnabled && !!root.composition
@@ -11025,6 +9706,7 @@ Scope {
             }
             VeloraRailNotifications {
                 id: notificationsPopover
+                motion: root.composition.motionTokens
                 anchors.fill: parent
                 z: 12
                 enabled: root.sideBarLayoutEnabled && !!root.composition
@@ -11044,6 +9726,7 @@ Scope {
             }
             VeloraRailWifi {
                 id: wifiPopover
+                motion: root.composition.motionTokens
                 onOpenedChanged: if (root.composition) root.composition.sidebarNetworkActive = opened
                 anchors.fill: parent
                 z: 12
@@ -11060,6 +9743,7 @@ Scope {
             }
             VeloraRailMediaPopover {
                 id: mediaPopover
+                motion: root.composition.motionTokens
                 anchors.fill: parent
                 z: 12
                 enabled: root.sideBarLayoutEnabled && !!root.composition && !!root.composition.mediaService
@@ -11082,6 +9766,13 @@ Scope {
                 }
                 onShapeChanged: {
                     Qt.callLater(unifiedFrameCanvas.requestPaint)
+                }
+            }
+            Connections {
+                target: root
+                function onRailMediaRequested() {
+                    mediaPopover.anchorY = panel.height - 160
+                    mediaPopover.open()
                 }
             }
             MouseArea {

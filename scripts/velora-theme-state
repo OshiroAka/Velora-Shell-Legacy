@@ -541,7 +541,7 @@ case "$command" in
     [[ -s "$visualizer_pixel_size_file" ]] && visualizer_pixel_size="$(clamp_decimal "$(cat "$visualizer_pixel_size_file")" "7.00" "3" "12")"
     [[ -s "$visualizer_gradient_file" ]] && visualizer_gradient="$(normalize_on_off "$(cat "$visualizer_gradient_file")")"
     [[ -s "$screen_visualizer_file" ]] && screen_visualizer="$(normalize_on_off "$(cat "$screen_visualizer_file")")"
-    [[ -s "$topbar_file" ]] && topbar="$(cat "$topbar_file")"
+    # Legacy topbar-only state is deliberately ignored.
     [[ -s "$topbar_frame_line_file" ]] && topbar_frame_line="$(normalize_on_off "$(cat "$topbar_frame_line_file")")"
     [[ -s "$topbar_opacity_file" ]] && topbar_opacity="$(clamp_decimal "$(cat "$topbar_opacity_file")" "0.18" "0" "1.00")"
     [[ -s "$topbar_gradient_file" ]] && topbar_gradient="$(normalize_on_off "$(cat "$topbar_gradient_file")")"
@@ -1114,32 +1114,9 @@ case "$command" in
     esac
     ;;
   topbar)
-    subcommand="${2:-get}"
-    case "$subcommand" in
-      get)
-        if [[ -s "$topbar_file" ]]; then
-          cat "$topbar_file"
-        else
-          printf 'off\n'
-        fi
-        ;;
-      set)
-        enabled="${3:-off}"
-        case "$enabled" in
-          1|true|yes|on|enabled) enabled="on" ;;
-          *) enabled="off" ;;
-        esac
-        mkdir -p "$state_dir"
-        printf '%s\n' "$enabled" > "$topbar_file"
-        ;;
-      reset)
-        rm -f "$topbar_file"
-        ;;
-      *)
-        printf 'usage: %s topbar get|set|reset [on|off]\n' "$0" >&2
-        exit 2
-        ;;
-    esac
+    # Old callers may still query/reset this key. No layout is selected.
+    printf 'off
+'
     ;;
   topbar-frame-line)
     subcommand="${2:-get}"
