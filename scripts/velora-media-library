@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""Fetch a whole lyric timeline once per track, or search the local Spotify bridge."""
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import sys
+import urllib.request
+
+
+def lyrics(meta):
+    loader = importlib.machinery.SourceFileLoader("velora_lyrics", str(Path(__file__).with_name("velora-lyrics-state")))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    source = importlib.util.module_from_spec(spec)
+    loader.exec_module(source)
+    if not meta.get("title") or not meta.get("artist"):
+        return {"ok": False, "reason": "missing-metadata", "lines": []}
+    meta["duration"] = round(float(meta.get("duration") or 0))
+    cached = source.load_cache(meta)
+    if cached is None:
+        data = source.fetch_lrclib(meta)
+        source.write_cache(meta, data)
+    else:
+        data = cached.get("data", {})
+    if not data.get("ok"):
+        return {"ok": False, "reason": data.get("reason", "no-lyrics"), "lines": []}
+    lines = source.parse_lrc(data.get("syncedLyrics", ""))
+    synced = bool(lines)
+    if not lines:
+        # Plain text is deliberately not presented as synchronized lyrics.
+        lines = [{"time": -1, "text": line.strip()} for line in data.get("plainLyrics", "").splitlines() if line.strip()]
+    return {"ok": bool(lines), "synced": synced, "lines": lines, "source": "LRCLIB"}
+
+
+def search(query):
+    cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "velora-shell"
+    try:
+        token = (cache / "spotify-bridge-token").read_text().strip()
+        payload = json.dumps({"action": "search", "query": str(query)[:200]}).encode()
+        request = urllib.request.Request("http://127.0.0.1:8765/command", data=payload,
+            headers={"Content-Type": "application/json", "X-Velora-Token": token})
+        with urllib.request.urlopen(request, timeout=14) as response:
+            return json.load(response)
+    except Exception:
+        return {"ok": False, "reason": "spotify-offline", "tracks": []}
+
+
+def main():
+    try:
+        if len(sys.argv) < 3:
+            raise ValueError("expected lyrics METADATA or search QUERY")
+        result = lyrics(json.loads(sys.argv[2])) if sys.argv[1] == "lyrics" else search(sys.argv[2])
+    except Exception:
+        result = {"ok": False, "reason": "fetch-failed", "lines": [], "tracks": []}
+    print(json.dumps(result, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()

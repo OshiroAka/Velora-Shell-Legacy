@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""Loopback bridge for Spotify's queue and in-client catalogue search.
+
+No Spotify credentials leave the client. Local commands require a private token;
+the extension may poll and answer only from Spotify's own origin.
+"""
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import hmac
+import json
+import os
+from pathlib import Path
+import secrets
+import tempfile
+import threading
+import time
+
+CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "velora-shell"
+ORIGINS = {"https://xpui.app.spotify.com", "https://open.spotify.com"}
+PENDING = {}
+CONDITION = threading.Condition()
+LAST_CLIENT = 0.0
+TOKEN = ""
+
+
+def atomic_write(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=".spotify-")
+    try:
+        with os.fdopen(fd, "w") as output:
+            json.dump(data, output, ensure_ascii=False)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def normalize_track(track):
+    if not isinstance(track, dict):
+        return None
+    art = str(track.get("art") or "")
+    if art.startswith("spotify:image:"):
+        art = "https://i.scdn.co/image/" + art[14:]
+    return {key: str(track.get(key) or "")[:1000] for key in ("uri", "title", "artist", "album")} | {
+        "art": art[:2000], "duration": track.get("duration") or 0}
+
+
+class Handler(BaseHTTPRequestHandler):
+    def allowed(self):
+        return self.headers.get("Origin", "") in ORIGINS | {""}
+
+    def reply(self, data, status=200):
+        payload = json.dumps(data, ensure_ascii=False).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        origin = self.headers.get("Origin", "")
+        if origin in ORIGINS:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        try:
+            self.wfile.write(payload)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def do_OPTIONS(self):
+        if not self.allowed():
+            return self.reply({}, 403)
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", self.headers.get("Origin", ""))
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Velora-Token")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.end_headers()
+
+    def do_GET(self):
+        global LAST_CLIENT
+        if not self.allowed():
+            return self.reply({}, 403)
+        if self.path == "/status":
+            return self.reply({"version": 2, "online": time.monotonic() - LAST_CLIENT < 25})
+        if self.path != "/requests":
+            return self.reply({}, 404)
+        with CONDITION:
+            LAST_CLIENT = time.monotonic()
+            CONDITION.wait_for(lambda: any(not item["sent"] for item in PENDING.values()), timeout=15)
+            LAST_CLIENT = time.monotonic()
+            requests = []
+            for key, item in PENDING.items():
+                if not item["sent"]:
+                    item["sent"] = True
+                    requests.append({"id": key, "action": "search", "query": item["query"]})
+        self.reply({"requests": requests})
+
+    def do_POST(self):
+        if not self.allowed():
+            return self.reply({}, 403)
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0 or length > 512_000:
+                return self.reply({}, 413)
+            data = json.loads(self.rfile.read(length))
+            if not isinstance(data, dict):
+                raise ValueError()
+            if self.path in ("/", "/queue"):
+                queue = data.get("next", [])
+                if not isinstance(queue, list):
+                    raise ValueError()
+                payload = {key: data.get(key) for key in ("timestamp", "revision", "playing", "position")}
+                payload.update(version=2, current=normalize_track(data.get("current")),
+                    next=[track for track in map(normalize_track, queue[:250]) if track])
+                atomic_write(CACHE / "spotify-queue.json", payload)
+                return self.reply({"ok": True})
+            if self.path == "/result":
+                with CONDITION:
+                    item = PENDING.get(str(data.get("id", "")))
+                    if item:
+                        tracks = data.get("tracks", [])
+                        item["result"] = {"ok": data.get("ok") is True, "reason": str(data.get("reason", "")),
+                            "tracks": [track for track in map(normalize_track, tracks[:30]) if track] if isinstance(tracks, list) else []}
+                        item["event"].set()
+                return self.reply({"ok": True})
+            if self.path == "/command":
+                if not TOKEN or not hmac.compare_digest(self.headers.get("X-Velora-Token", ""), TOKEN):
+                    return self.reply({}, 403)
+                if data.get("action") != "search":
+                    raise ValueError()
+                query = str(data.get("query", "")).strip()[:200]
+                if len(query) < 2:
+                    return self.reply({"ok": True, "tracks": []})
+                with CONDITION:
+                    if time.monotonic() - LAST_CLIENT > 25:
+                        return self.reply({"ok": False, "reason": "spotify-offline", "tracks": []})
+                    if len(PENDING) >= 8:
+                        return self.reply({"ok": False, "reason": "busy", "tracks": []})
+                    key = secrets.token_hex(12)
+                    item = {"query": query, "sent": False, "event": threading.Event()}
+                    PENDING[key] = item
+                    CONDITION.notify_all()
+                item["event"].wait(11)
+                with CONDITION:
+                    PENDING.pop(key, None)
+                return self.reply(item.get("result", {"ok": False, "reason": "search-timeout", "tracks": []}))
+            self.reply({}, 404)
+        except (ValueError, TypeError, KeyError):
+            self.reply({"ok": False, "reason": "invalid-request"}, 400)
+
+    def log_message(self, *_):
+        pass
+
+
+def main():
+    global TOKEN
+    CACHE.mkdir(parents=True, exist_ok=True)
+    TOKEN = secrets.token_urlsafe(32)
+    token_path = CACHE / "spotify-bridge-token"
+    fd = os.open(token_path, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600)
+    with os.fdopen(fd, "w") as output:
+        output.write(TOKEN)
+    os.chmod(token_path, 0o600)
+    ThreadingHTTPServer(("127.0.0.1", 8765), Handler).serve_forever()
+
+
+if __name__ == "__main__":
+    main()

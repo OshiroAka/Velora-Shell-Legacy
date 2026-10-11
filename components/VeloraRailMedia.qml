@@ -1,14 +1,11 @@
 pragma ComponentBehavior: Bound
-
 import QtQuick
-import Qt5Compat.GraphicalEffects
+import QtQuick.Controls
 import Velora.Visualizer 1.0
 
 Item {
     id: root
-
     required property var media
-
     property var visualizer: null
     property color surfaceColor: "#272730"
     property color ink: "white"
@@ -16,204 +13,62 @@ Item {
     property string fontFamily: "sans-serif"
     property real availableHeight: 176
     property bool selected: false
-
-    readonly property bool hasPlayer:
-        !!media && media.hasPlayer
-
-    readonly property bool playing:
-        hasPlayer && media.playing
-
+    property bool animated: true
+    readonly property bool hasPlayer: !!media && media.hasPlayer
+    readonly property bool playing: hasPlayer && media.playing
     signal triggerHoverChanged(bool inside)
     signal activated()
-
     implicitWidth: 44
     implicitHeight: 100
     height: implicitHeight
 
     Rectangle {
-        id: surface
-
         anchors.fill: parent
-
-        radius: 11
-
-        color: root.surfaceColor
-
-        border.width: root.selected ? 1.4 : 1
-        border.color: Qt.rgba(
-            root.ink.r,
-            root.ink.g,
-            root.ink.b,
-            root.selected ? 0.40 : 0.23
-        )
-
-        Behavior on border.color {
-            ColorAnimation {
-                duration: 140
-            }
+        radius: 14
+        color: Qt.rgba(root.surfaceColor.r, root.surfaceColor.g, root.surfaceColor.b, .60)
+        border.color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, root.selected ? .65 : hover.hovered ? .4 : .20)
+        Behavior on border.color { ColorAnimation { duration: root.animated ? 150 : 0 } }
+        VeloraMediaArtwork {
+            id: art
+            x: 4; y: 4; width: parent.width - 8; height: width; radius: 10
+            source: root.hasPlayer ? root.media.artUrl : ""
+            accent: root.accent; ink: root.ink; animated: root.animated; selected: hover.hovered
         }
-
-        Rectangle {
-            id: cover
-
-            anchors {
-                top: parent.top
-                topMargin: 5
-                horizontalCenter: parent.horizontalCenter
-            }
-
-            width: parent.width - 10
-            height: width
-
-            radius: 8
-
-            color: Qt.rgba(
-                root.ink.r,
-                root.ink.g,
-                root.ink.b,
-                0.06
-            )
-
-            Image {
-                id: artwork
-
-                anchors.fill: parent
-
-                source:
-                    root.hasPlayer
-                        ? root.media.artUrl
-                        : ""
-
-                sourceSize.width: 96
-                sourceSize.height: 96
-
-                asynchronous: true
-                fillMode: Image.PreserveAspectCrop
-                smooth: true
-
-                layer.enabled: true
-
-                layer.effect: OpacityMask {
-                    maskSource: Rectangle {
-                        width: cover.width
-                        height: cover.height
-                        radius: cover.radius
-                    }
-                }
-            }
-
-            VeloraMaterialIcon {
-                anchors.centerIn: parent
-
-                width: 20
-                height: 20
-
-                visible:
-                    artwork.status !== Image.Ready
-
-                iconName: "music"
-                iconColor: root.ink
-                opacity: 0.55
-            }
-        }
-
-        Text {
-            anchors {
-                top: cover.bottom
-                topMargin: 5
-                horizontalCenter: parent.horizontalCenter
-            }
-
-            width: parent.width - 6
-            height: 12
-
-            text:
-                root.hasPlayer
-                    ? root.media.title
-                    : "Mídia"
-
-            textFormat: Text.PlainText
-
-            color: root.ink
-
-            font.family: root.fontFamily
-            font.pixelSize: 9
-            font.weight: Font.Medium
-
-            horizontalAlignment: Text.AlignHCenter
-            elide: Text.ElideRight
-        }
-
-        Text {
-            y: 57
-
-            anchors.horizontalCenter:
-                parent.horizontalCenter
-
-            width: parent.width - 6
-
-            visible: root.hasPlayer
-
-            text:
-                root.hasPlayer
-                    ? root.media.artist
-                    : ""
-
-            color: root.ink
-            opacity: 0.68
-
-            font.family: root.fontFamily
-            font.pixelSize: 8
-
-            horizontalAlignment: Text.AlignHCenter
-            elide: Text.ElideRight
-        }
-
         Spectrum {
-            anchors.horizontalCenter:
-                parent.horizontalCenter
-
-            y: 76
-
-            width: 38
-            height: 18
-
+            x: 7; y: 46; width: parent.width - 14; height: 12
             analyzer: root.visualizer
-
-            active:
-                visible
-                && root.visible
-                && root.playing
-                && !!root.visualizer
-                && root.visualizer.running
-
-            referenceHeight: height
-            strength: 0.30
-
-            opacity:
-                root.selected ? 1 : 0.82
-
-            accentStart: root.ink
-            accentMiddle: root.ink
-            accentEnd: root.ink
-
+            active: root.visible && root.playing && !!root.visualizer && root.visualizer.running
+            visible: active
+            referenceHeight: height; strength: .25
+            accentStart: root.accent; accentMiddle: root.ink; accentEnd: root.accent
             outlineColor: "transparent"
         }
-
-        HoverHandler {
-            id: hover
-
-            blocking: false
-
-            onHoveredChanged:
-                root.triggerHoverChanged(hovered)
+        Text {
+            x: 3; y: 46; width: parent.width - 6
+            visible: !root.playing
+            text: root.hasPlayer ? "PAUSA" : "MÚSICA"
+            color: root.ink; opacity: .65
+            font.family: root.fontFamily; font.pixelSize: 7; font.letterSpacing: .65
+            horizontalAlignment: Text.AlignHCenter
         }
-
-        TapHandler {
-            acceptedButtons: Qt.LeftButton
-
-            onTapped:
-                root.activated()
+        HoverHandler { id: hover; blocking: false; onHoveredChanged: root.triggerHoverChanged(hovered) }
+        TapHandler { acceptedButtons: Qt.LeftButton; onTapped: root.activated() }
+        ToolTip.visible: hover.hovered && !root.selected
+        ToolTip.delay: 900
+        ToolTip.text: root.hasPlayer ? root.media.title + (root.media.artist ? " · " + root.media.artist : "") : "Sua música · Spotify"
+        VeloraMediaButton {
+            objectName: "railMediaPlay"
+            anchors.horizontalCenter: parent.horizontalCenter; y: 63
+            width: 28; height: 28
+            iconName: root.playing ? "pause" : "play"
+            primary: false; highlighted: root.playing; cornerRadius: 8; ink: root.ink; accent: root.accent; animated: root.animated
+            hint: root.hasPlayer ? (root.playing ? "Pausar" : "Reproduzir") : "Abrir música"
+            onClicked: root.hasPlayer && root.media.canToggle ? root.media.togglePlaying() : root.activated()
+        }
+        Rectangle {
+            x: 10; y: parent.height - 5; width: parent.width - 20; height: 2; radius: 1
+            color: Qt.rgba(root.ink.r, root.ink.g, root.ink.b, .12)
+            Rectangle { width: parent.width * (root.hasPlayer ? root.media.progress : 0); height: 2; radius: 1; color: root.accent }
         }
     }
 }

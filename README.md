@@ -74,6 +74,13 @@ BlueZ (`bluetoothctl`), `brightnessctl`, `powerprofilesctl`, `xdg-open`,
 `linux-wallpaperengine`. Optional integrations include cava/glava,
 EasyEffects, Kitty, terminal themes and application themes.
 
+Spotify catalogue search requires Spotify with Spicetify. Add the extension
+`integrations/spotify/velora-spotify-bridge.js` to your Spicetify extensions,
+enable it in Spicetify, and run `python3 ./scripts/velora-spotify-bridge` while
+Spotify is open. This optional helper listens on `127.0.0.1:8765`; credentials
+stay in the Spotify client and bridge state goes to the user's XDG cache.
+Playback controls use MPRIS and work without this helper. Lyrics use LRCLIB.
+
 ## Source layout
 
 | Directory or file | Responsibility |
