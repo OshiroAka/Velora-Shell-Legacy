@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Effects
 import "../lock" as Lock
+import "../../core/SurfaceGeometry.js" as Geometry
 
 Item {
     id: root
@@ -19,6 +20,10 @@ Item {
     required property var causticsClock
     required property bool lockPresented
     property bool editing: false
+    property bool barOnRight: false
+    readonly property var sceneBounds: Geometry.designBounds(width, height,
+        lockPresented || !config.topbarEnabled ? 0 : 64, barOnRight,
+        lockPresented || !config.topbarEnabled ? 0 : 40, lockPresented ? 0 : 18)
 
     readonly property real designScale: Math.min(width / 1600, height / 900)
     readonly property real designOriginX: (width - 1600 * designScale) / 2
@@ -157,8 +162,10 @@ Item {
         property real hoverLift: widgetHover.hovered && root.interactionEnabled
             && !root.lockPresented && !root.motion.reduced ? 1 : 0
 
-        x: root.designOriginX + configuredX * root.designScale
-        y: root.designOriginY + configuredY * root.designScale
+        readonly property var displayPose: Geometry.pose({x: configuredX, y: configuredY,
+            scale: configuredScale * (1 + hoverLift * 0.014), rotation: configuredRotation}, configuredWidth, configuredHeight, root.sceneBounds)
+        x: root.designOriginX + displayPose.x * root.designScale
+        y: root.designOriginY + displayPose.y * root.designScale
         // Keep the card and all of its fixed design-space children in the
         // same 1600x900 coordinate system, then scale the whole module once.
         // Scaling only the host rectangle enlarged the glass background while
@@ -166,7 +173,7 @@ Item {
         // below every module on 1920x1200 displays.
         width: configuredWidth
         height: configuredHeight
-        scale: configuredScale * root.designScale * (1 + hoverLift * 0.014)
+        scale: displayPose.scale * root.designScale
         rotation: configuredRotation
         opacity: configuredOpacity
         visible: Boolean(widgetData) && opacity > 0.001
@@ -393,6 +400,7 @@ Item {
                 presented: !root.lockPresented
                 space: "desktop"
                 nativeOptics: true
+                surfaceBounds: root.sceneBounds
                 transientTransform: root.editor.editSpace === "desktop"
                     ? root.editor.effectiveTransform(modelData.id,
                         modelData.desktop || ({})) : null

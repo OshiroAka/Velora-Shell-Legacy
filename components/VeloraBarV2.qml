@@ -103,9 +103,9 @@ Item {
     property bool volumeControlOpen: false
     property bool brightnessControlOpen: false
     property bool batteryControlOpen: false
-    readonly property real volumeControlCenter: contentLayer.y + utilitiesColumn.y + slotVolume.y + slotVolume.height / 2
-    readonly property real brightnessControlCenter: contentLayer.y + utilitiesColumn.y + slotBrightness.y + slotBrightness.height / 2
-    readonly property real batteryControlCenter: contentLayer.y + utilitiesColumn.y + slotBattery.y + slotBattery.height / 2
+    readonly property real volumeControlCenter: contentLayer.y + utilitiesColumn.y + slotVolume.y + slotVolume.height / 2 - railViewport.contentY
+    readonly property real brightnessControlCenter: contentLayer.y + utilitiesColumn.y + slotBrightness.y + slotBrightness.height / 2 - railViewport.contentY
+    readonly property real batteryControlCenter: contentLayer.y + utilitiesColumn.y + slotBattery.y + slotBattery.height / 2 - railViewport.contentY
     property bool autoHideHovering: false
     readonly property bool autoHideRevealed: !theme || !theme.barAutoHideEnabled || autoHideHovering || focusMode || activePopupType.length > 0
     property real focusX: 0
@@ -917,18 +917,24 @@ Item {
 
     }
 
+    Flickable {
+        id: railViewport
+        z: 10
+        anchors.fill: panelSurface
+        contentWidth: width
+        contentHeight: Math.max(height, contentLayer.implicitHeight + contentLayer.y + (root.softStyle ? Math.round(18 * root.uiScale) : Math.round(14 * root.uiScale)))
+        interactive: contentHeight > height
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
     ColumnLayout {
         id: contentLayer
         z: 10
         opacity: root.autoHideRevealed ? 1 : 0
 
-        anchors {
-            fill: panelSurface
-            leftMargin: root.horizontalContentMargin
-            rightMargin: root.horizontalContentMargin
-            topMargin: root.softStyle ? Math.round(20 * root.uiScale) : Math.round(18 * root.uiScale)
-            bottomMargin: root.softStyle ? Math.round(18 * root.uiScale) : Math.round(14 * root.uiScale)
-        }
+        x: root.horizontalContentMargin
+        y: root.softStyle ? Math.round(20 * root.uiScale) : Math.round(18 * root.uiScale)
+        width: railViewport.width - root.horizontalContentMargin * 2
+        height: railViewport.contentHeight - y - (root.softStyle ? Math.round(18 * root.uiScale) : Math.round(14 * root.uiScale))
 
         Behavior on opacity {
             NumberAnimation {
@@ -1122,7 +1128,7 @@ Item {
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.minimumHeight: 18
+            Layout.minimumHeight: root.mediaService ? 148 : 18
 
             Column {
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -1140,6 +1146,7 @@ Item {
                 }
                 VeloraRailMedia {
     id: railMedia
+    animated: root.theme ? root.theme.motionEnabled : true
 
     width: Math.min(
         44,
@@ -1201,6 +1208,7 @@ Item {
             Layout.preferredWidth: Math.round(48 * root.uiScale * root.compactScale)
             Layout.preferredHeight: Math.round(48 * root.uiScale * root.compactScale)
         }
+    }
     }
 
     HoverHandler {

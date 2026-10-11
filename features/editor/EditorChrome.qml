@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import "../../components" as Components
 import "../lock" as Lock
+import "../../core/SurfaceGeometry.js" as Geometry
 
 Item {
     id: root
@@ -23,12 +24,18 @@ Item {
     property bool systemOpen: false
     readonly property bool settingsMode: controller.mode === "settings"
     readonly property bool editingMode: controller.mode === "editing"
+    readonly property bool railOnRight: controller.shell ? controller.shell.barOnRight : false
+    readonly property var surfaceArea: Geometry.area(width, height, config.topbarEnabled ? 64 : 0,
+        railOnRight, config.topbarEnabled ? 40 : 0, 0, 18)
+    function fitPanel(w, h, x, y) { return Geometry.fit(surfaceArea, w, h, x, y) }
     SettingsHome {
         id: settingsHome
-        width: Math.min(1020, parent.width * 0.90)
-        height: Math.min(760, parent.height * 0.88)
-        x: Math.round((parent.width - width) / 2)
-        y: Math.round((parent.height - height) / 2)
+        readonly property real wantedWidth: Math.min(1020, parent.width * 0.90)
+        readonly property real wantedHeight: Math.min(760, parent.height * 0.88)
+        readonly property var fitted: root.fitPanel(wantedWidth, wantedHeight, (parent.width - wantedWidth) / 2, (parent.height - wantedHeight) / 2)
+        width: fitted.width; height: fitted.height
+        x: Geometry.clamp(Math.round(fitted.x), root.surfaceArea.x, root.surfaceArea.x + root.surfaceArea.width - width)
+        y: Geometry.clamp(Math.round(fitted.y), root.surfaceArea.y, root.surfaceArea.y + root.surfaceArea.height - height)
         z: 40; visible: root.settingsMode
         config: root.config; controller: root.controller; editor: root.editor
         theme: root.theme; profileService: root.profileService
@@ -197,10 +204,10 @@ Item {
     Lock.GlassPanel {
         id: toolBar
         visible: root.editingMode
-        width: Math.min(parent.width - 40, 560)
+        width: Math.min(root.surfaceArea.width, 560)
         height: 64
-        x: (parent.width - width) / 2
-        y: root.desktop ? parent.height - height - 18 : 18
+        x: Geometry.clamp((parent.width - width) / 2, root.surfaceArea.x, root.surfaceArea.x + root.surfaceArea.width - width)
+        y: Geometry.clamp(root.desktop ? parent.height - height - 18 : 18, root.surfaceArea.y, root.surfaceArea.y + root.surfaceArea.height - height)
         z: 30
         radius: 25
         nativeOptics: false
@@ -263,10 +270,10 @@ Item {
     Lock.GlassPanel {
         id: layersPanel
         visible: false
-        x: 18
-        y: root.desktop ? 84 : 102
-        width: 252
-        height: Math.min(520, parent.height - 190)
+        x: root.surfaceArea.x
+        y: Geometry.clamp(root.desktop ? 84 : 102, root.surfaceArea.y, root.surfaceArea.y + root.surfaceArea.height - height)
+        width: Math.min(252, root.surfaceArea.width)
+        height: Math.max(0, Math.min(520, parent.height - 190))
         z: 28
         radius: 26
         nativeOptics: false
@@ -378,11 +385,11 @@ Item {
     Lock.GlassPanel {
         id: barPanel
         visible: false
-        width: 560
-        height: Math.min(620, parent.height - 170)
-        x: Math.max(18, Math.min(parent.width - width - 18,
+        width: Math.min(560, root.surfaceArea.width)
+        height: Math.max(0, Math.min(620, parent.height - 170))
+        x: Math.max(root.surfaceArea.x, Math.min(root.surfaceArea.x + root.surfaceArea.width - width,
             toolBar.x + (toolBar.width - width) / 2))
-        y: toolBar.y - height - 12
+        y: Geometry.clamp(toolBar.y - height - 12, root.surfaceArea.y, root.surfaceArea.y + root.surfaceArea.height - height)
         z: 33
         radius: 28
         nativeOptics: false
@@ -508,11 +515,11 @@ Item {
         id: catalog
         visible: root.editingMode && root.catalogOpen
         opacity: visible ? 1 : 0
-        width: 300
-        height: 436
-        x: Math.max(18, Math.min(parent.width - width - 18,
+        width: Math.min(300, root.surfaceArea.width)
+        height: Math.min(436, Math.max(0, root.surfaceArea.height - toolBar.height - 12))
+        x: Math.max(root.surfaceArea.x, Math.min(root.surfaceArea.x + root.surfaceArea.width - width,
             toolBar.x + 8))
-        y: root.desktop ? toolBar.y - height - 12 : toolBar.y + toolBar.height + 12
+        y: Geometry.clamp(root.desktop ? toolBar.y - height - 12 : toolBar.y + toolBar.height + 12, root.surfaceArea.y, root.surfaceArea.y + root.surfaceArea.height - height)
         z: 32
         radius: 28
         nativeOptics: false
@@ -523,9 +530,13 @@ Item {
         borderColor: root.theme.border
         shadowColor: root.theme.shadow
 
+        Flickable {
+            anchors.fill: parent; anchors.margins: 16
+            contentWidth: width; contentHeight: catalogContents.implicitHeight
+            clip: true; boundsBehavior: Flickable.StopAtBounds
         Column {
-            anchors.fill: parent
-            anchors.margins: 16
+            id: catalogContents
+            width: parent.width
             spacing: 8
 
             Text {
@@ -561,16 +572,17 @@ Item {
                 ToolButton { caption: "Destaque"; onTriggered: root.controller.choosePhotoGrid("feature") }
             }
         }
+        }
     }
 
     Lock.GlassPanel {
         id: profilesPanel
         visible: false
-        width: 330
-        height: Math.min(470, parent.height - 170)
-        x: Math.max(18, Math.min(parent.width - width - 18,
+        width: Math.min(330, root.surfaceArea.width)
+        height: Math.max(0, Math.min(470, parent.height - 170))
+        x: Math.max(root.surfaceArea.x, Math.min(root.surfaceArea.x + root.surfaceArea.width - width,
             toolBar.x + 190))
-        y: root.desktop ? toolBar.y - height - 12 : toolBar.y + toolBar.height + 12
+        y: Geometry.clamp(root.desktop ? toolBar.y - height - 12 : toolBar.y + toolBar.height + 12, root.surfaceArea.y, root.surfaceArea.y + root.surfaceArea.height - height)
         z: 32
         radius: 28
         nativeOptics: false
@@ -581,9 +593,13 @@ Item {
         borderColor: root.theme.border
         shadowColor: root.theme.shadow
 
+        Flickable {
+            anchors.fill: parent; anchors.margins: 16
+            contentWidth: width; contentHeight: profilesPanelContents.implicitHeight
+            clip: true; boundsBehavior: Flickable.StopAtBounds
         Column {
-            anchors.fill: parent
-            anchors.margins: 16
+            id: profilesPanelContents
+            width: parent.width
             spacing: 8
             Text {
                 text: "Perfis e wallpaper"
@@ -625,16 +641,17 @@ Item {
                 }
             }
         }
+        }
     }
 
     Lock.GlassPanel {
         id: inspector
         visible: root.editingMode && Boolean(root.selectedLayer)
-        x: root.numeric(root.selectedTransform.x, 0) < 800
-            ? parent.width - width - 20 : 20
+        x: Geometry.clamp(root.numeric(root.selectedTransform.x, 0) < 800
+            ? parent.width - width - 20 : 20, root.surfaceArea.x, root.surfaceArea.x + root.surfaceArea.width - width)
         y: 78
         width: Math.min(360, parent.width * 0.40)
-        height: parent.height - 174
+        height: Math.max(0, parent.height - 174)
         z: 29
         radius: 28
         nativeOptics: false

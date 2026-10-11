@@ -1,4 +1,5 @@
 import QtQuick
+import "../../core/SurfaceGeometry.js" as Geometry
 
 Item {
     id: root
@@ -23,6 +24,7 @@ Item {
     property var transientTransform: null
     property string space: "lock"
     property bool nativeOptics: false
+    property var surfaceBounds: null
 
     readonly property var transformData: transientTransform
         || layerData[space] || layerData.transform || ({})
@@ -45,12 +47,14 @@ Item {
     property real configuredOpacity: enabledInSpace
         ? Number(transformData.opacity === undefined ? 1 : transformData.opacity) : 0
 
-    x: configuredX
-    y: configuredY + (1 - reveal) * 26
+    readonly property var displayPose: Geometry.pose({x: configuredX, y: configuredY + (1 - reveal) * 26,
+        scale: configuredScale, rotation: configuredRotation}, width, height, surfaceBounds)
+    x: displayPose.x
+    y: displayPose.y
     width: Number(layerData.baseWidth || config.moduleSize(layerType)[0])
     height: Number(layerData.baseHeight || config.moduleSize(layerType)[1])
     z: zBase + Number(layerData.order || 0) * 0.001
-    scale: configuredScale
+    scale: displayPose.scale
     rotation: configuredRotation
     opacity: configuredOpacity * Math.max(0, Math.min(1, reveal))
     visible: !suppressed && opacity > 0.001

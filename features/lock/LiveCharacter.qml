@@ -7,8 +7,10 @@ Item {
     property url source
     property bool playing: visible
     property int fillMode: Image.Stretch
-    property bool smooth: true
+    smooth: true
     property bool mipmap: true
+    // Callers such as bounded previews may cap still/GIF decode resolution.
+    property size sourceSize: Qt.size(-1, -1)
 
     readonly property string normalizedSource: String(source || "").toLowerCase()
         .split("?")[0].split("#")[0]
@@ -35,6 +37,7 @@ Item {
         id: staticImage
         anchors.fill: parent
         source: !root.videoSource && !root.animatedImageSource ? root.source : ""
+        sourceSize: root.sourceSize
         fillMode: root.fillMode
         smooth: root.smooth
         mipmap: root.mipmap
@@ -47,6 +50,7 @@ Item {
         id: animatedImage
         anchors.fill: parent
         source: root.animatedImageSource ? root.source : ""
+        sourceSize: root.sourceSize
         fillMode: root.fillMode
         smooth: root.smooth
         mipmap: root.mipmap

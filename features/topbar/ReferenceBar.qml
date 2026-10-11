@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell.Hyprland
 import "../../components" as Components
+import "BarGeometry.js" as BarGeometry
 
 Item {
     id: root
@@ -20,6 +21,15 @@ Item {
     required property real wavePhase
     property int opticsGeneration: 0
     property alias barSurfaceItem: background
+    property real leftInset: 0
+    property real rightInset: 20
+    signal geometryChanged()
+    function sectionWidth(section) {
+        return config.topbarItemsForSection(section, false).reduce((sum, item) => sum + legacyItemWidth(item.type), 0)
+    }
+    readonly property var sectionBounds: BarGeometry.sections(width,
+        sectionWidth("left"), sectionWidth("center"), toolRow.width, leftInset, rightInset)
+    onSectionBoundsChanged: geometryChanged()
     readonly property var hyprMonitor: Hyprland.monitorFor(host.screen)
     readonly property var workspaceIds: {
         const ids = [1, 2, 3, 4, 5]
@@ -215,8 +225,22 @@ Item {
             }
         }
     }
-    Section { sectionName: "left"; anchors.left: parent.left }
-    Section { sectionName: "center"; anchors.horizontalCenter: parent.horizontalCenter }
+    Flickable {
+        x: root.sectionBounds.left.x; width: root.sectionBounds.left.width; height: root.height
+        contentWidth: leftSection.width; contentHeight: height
+        clip: true; boundsBehavior: Flickable.StopAtBounds
+        interactive: contentWidth > width
+        onContentXChanged: root.geometryChanged()
+        Section { id: leftSection; sectionName: "left" }
+    }
+    Flickable {
+        x: root.sectionBounds.center.x; width: root.sectionBounds.center.width; height: root.height
+        contentWidth: centerSection.width; contentHeight: height
+        clip: true; boundsBehavior: Flickable.StopAtBounds
+        interactive: contentWidth > width
+        onContentXChanged: root.geometryChanged()
+        Section { id: centerSection; sectionName: "center" }
+    }
 
     Component {
         id: catComponent
@@ -240,10 +264,14 @@ Item {
         }
     }
 
+    Flickable {
+        x: root.sectionBounds.right.x; width: root.sectionBounds.right.width; height: root.height
+        contentWidth: toolRow.width; contentHeight: height
+        clip: true; boundsBehavior: Flickable.StopAtBounds
+        interactive: contentWidth > width
+        onContentXChanged: root.geometryChanged()
     Row {
         id: toolRow
-        anchors.right: parent.right
-        anchors.rightMargin: 20
         height: root.height
         spacing: 1
         Repeater {
@@ -255,7 +283,7 @@ Item {
                 required property int index
                 readonly property string type: modelData
                 theme: root.theme
-                reducedMotion: root.controller.supportsHover(type) ? false : root.config.reducedMotion
+                reducedMotion: root.config.reducedMotion
                 width: (type === "clock" ? 178 : type === "thing" ? (root.width < 1000 ? 90 : 160)
                     : type === "timer" ? 74 : type === "battery" ? 44 : 36) * root.density
                 height: root.height
@@ -392,5 +420,6 @@ Item {
                 }
             }
         }
+    }
     }
 }

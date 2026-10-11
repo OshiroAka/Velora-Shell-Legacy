@@ -1,4 +1,5 @@
 import QtQuick
+import "../../core/SurfaceGeometry.js" as Geometry
 
 Item {
     id: root
@@ -8,13 +9,22 @@ Item {
     required property var editor
     required property var theme
     required property var motion
+    property bool barOnRight: false
+    readonly property var sceneBounds: Geometry.designBounds(width, height,
+        editor.editSpace === "desktop" && config.topbarEnabled ? 64 : 0, barOnRight,
+        editor.editSpace === "desktop" && config.topbarEnabled ? 40 : 0,
+        editor.editSpace === "desktop" ? 18 : 0)
+    function displayTransform(layer) {
+        return Geometry.pose(layer.transform || ({}), Number(layer.baseWidth || config.moduleSize(layer.type)[0]),
+            Number(layer.baseHeight || config.moduleSize(layer.type)[1]), sceneBounds)
+    }
 
     readonly property real designScale: Math.min(width / 1600, height / 900)
     readonly property real designOriginX: (width - 1600 * designScale) / 2
     readonly property real designOriginY: (height - 900 * designScale) / 2
     readonly property var selectedLayer: editor.layerById(editor.selectedLayerId)
     readonly property var selectedTransform: selectedLayer
-        ? selectedLayer.transform : ({})
+        ? displayTransform(selectedLayer) : ({})
     readonly property real selectedX: selectedLayer
         ? designOriginX + Number(selectedTransform.x || 0) * designScale : 0
     readonly property real selectedY: selectedLayer
@@ -95,7 +105,7 @@ Item {
             const layer = layers[index]
             if (!layer.visible)
                 continue
-            const transform = layer.transform || ({})
+            const transform = displayTransform(layer)
             const scale = Number(transform.scale || 1)
             const width = Number(layer.baseWidth || config.moduleSize(layer.type)[0]) * scale
             const height = Number(layer.baseHeight || config.moduleSize(layer.type)[1]) * scale
@@ -196,8 +206,9 @@ Item {
             const point = root.designPoint(mouse.x, mouse.y)
             root.pressSceneX = point.x
             root.pressSceneY = point.y
-            root.startX = Number(layer.transform.x || 0)
-            root.startY = Number(layer.transform.y || 0)
+            const displayed = root.displayTransform(layer)
+            root.startX = Number(displayed.x || 0)
+            root.startY = Number(displayed.y || 0)
         }
 
         onPositionChanged: function(mouse) {

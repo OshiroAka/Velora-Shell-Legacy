@@ -1,14 +1,16 @@
 .pragma library
 
-function panel(width, height, barHeight, anchor, wantedWidth, wantedHeight, progress) {
+function panel(width, height, barHeight, anchor, wantedWidth, wantedHeight, progress, leftInset, rightInset) {
     const p = Math.max(0, Math.min(1, Number(progress)))
-    const availableWidth = Math.max(1, width - 16)
+    const left = Math.max(8, Number(leftInset) || 0)
+    const right = Math.max(8, Number(rightInset) || 0)
+    const availableWidth = Math.max(0, width - left - right)
     const targetWidth = Math.min(wantedWidth, availableWidth)
     const targetHeight = Math.min(wantedHeight, Math.max(1, height - barHeight - 38))
     const w = Math.min(availableWidth, 48 + (targetWidth - 48) * p)
     const h = targetHeight * p
-    const origin = Math.max(8, Math.min(width - 8, anchor))
-    return { x: Math.max(8, Math.min(width - w - 8, origin - w / 2)),
+    const origin = Math.max(left, Math.min(width - right, anchor))
+    return { x: Math.max(left, Math.min(width - w - right, origin - w / 2)),
         y: barHeight + 14 * p, width: w, height: h,
         anchor: origin, targetWidth: targetWidth, targetHeight: targetHeight }
 }
