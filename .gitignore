@@ -5,6 +5,9 @@
 *.key
 *.pem
 config/local.json
+/.ssh/
+/credentials.json
+/secrets.json
 
 # Build products and runtime state
 build/
@@ -18,8 +21,14 @@ build/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.mypy_cache/
 .qmlcache/
 .cache/
+/dist/
+/logs/
+/reports/
+/.venv/
+/venv/
 themes/pywal16.json
 
 # Local copies and editor files
@@ -28,10 +37,48 @@ backup/
 *.bak*
 *.old
 *.backup
+*.save
+*.before-*
 *.orig
 *.rej
+*.swp
+*.swo
 *~
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Internal validation and development evidence (keep locally)
+/tests/
+/AGENTS.md
+/CHECKPOINT*.md
+/checkpoints/
+/.codex/
+/.astra/
+/.agent/
+/.agents/
+
+# Unused legacy QML retained only in the development checkout
+/components/VeloraControlCenterWallpaper.qml
+/components/VeloraLeftMenu.qml
+/components/VeloraRailMonitor.qml
+/components/VeloraTopBarPopup.qml
+/components/popups/VeloraPopupActionRow.qml
+/components/popups/VeloraPopupIconTile.qml
+/core/PreferencesController.qml
+/features/lock/MediaCoverFace.qml
+/features/lock/MediaStack.qml
+/features/lock/ProfileColumn.qml
+/features/rightmenu/RightEdgeMenu.qml
+/features/settings/PreferencesPanel.qml
+/features/settings/SettingsPanel.qml
+/features/topbar/BarSlider.qml
+/features/topbar/GlassButton.qml
+/features/topbar/GlassIsland.qml
+/features/topbar/MotionGlassIsland.qml
+/features/topbar/NotchButton.qml
+/features/topbar/TimerMorphPopover.qml
+/features/topbar/VeloraLogo.qml
+/surfaces/RightEdgeMenuHost.qml
+/surfaces/SettingsHost.qml

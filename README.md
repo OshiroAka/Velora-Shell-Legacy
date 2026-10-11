@@ -89,7 +89,6 @@ EasyEffects, Kitty, terminal themes and application themes.
 | `native/hyprland/` | Compositor refraction and surface geometry |
 | `assets/`, `shaders/`, `themes/` | Interface resources and public defaults |
 | `config/` | Public configuration, schema and compositor template |
-| `tests/` | Behavioral tests using temporary synthetic data |
 
 ## User data
 
@@ -120,7 +119,6 @@ as stable interchange formats for existing composition exports.
 ## Validation
 
 ```sh
-./tests/run
 ./scripts/build
 ./scripts/runtime-check --parse
 ./scripts/runtime-check
