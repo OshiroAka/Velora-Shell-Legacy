@@ -68,6 +68,10 @@ def privileged(command):
 
 
 def installed_copy(source, target, mode):
+    return verified_copy(source, target, mode)
+
+
+def verified_copy(source, target, mode):
     try:
         info = target.lstat()
         return (not target.is_symlink() and target.is_file() and info.st_uid == 0
@@ -77,7 +81,7 @@ def installed_copy(source, target, mode):
         return False
 
 
-def setup(root, *, check_only=False, install_dependencies=False, provider=None):
+def _setup(root, *, check_only=False, install_dependencies=False, provider=None):
     provider = provider or Provider()
     if not provider.supported:
         print("Fan+: indisponível neste dispositivo; instalação ignorada.")
@@ -88,7 +92,10 @@ def setup(root, *, check_only=False, install_dependencies=False, provider=None):
         return False
     issues, packages, ec_missing = dependency_plan()
     if issues:
+        print("Fan+ suportado neste dispositivo. Kernel: " + platform.release())
         print("Fan+: dependências pendentes:\n- " + "\n- ".join(issues))
+        if not check_only and not install_dependencies and sys.stdin.isatty():
+            install_dependencies = input("Deseja instalar suporte Fan+? [Y/n] ").strip().lower() not in ("n", "no", "não", "nao")
         arch = arch_system()
         if packages and arch:
             command = ["/usr/bin/pacman", "-S", "--needed", *packages]
@@ -102,10 +109,15 @@ def setup(root, *, check_only=False, install_dependencies=False, provider=None):
         if ec_missing:
             print("ec_probe: este notebook foi validado com nbfc-linux-git. Instale esse pacote pela fonte que você revisou; ele pode não existir nos repositórios do pacman. Não habilite o serviço NBFC.")
             if arch:
-                aur_helper = shutil.which("paru") or shutil.which("yay")
+                aur_helper = shutil.which("paru")
                 if aur_helper:
                     print("Instalação manual, como usuário normal, revisando o pacote: "
                           + shlex.join([aur_helper, "-S", "--needed", "nbfc-linux-git"]))
+                    if install_dependencies and not check_only and sys.stdin.isatty() and os.geteuid() != 0:
+                        if input("Instalar nbfc-linux-git com paru, revisando o AUR, sem habilitar NBFC? [y/N] ").strip().lower() in ("y", "s", "yes", "sim"):
+                            subprocess.run([aur_helper, "-S", "--needed", "nbfc-linux-git"], check=False)
+                else:
+                    print("Como usuário normal, instale paru e execute: paru -S --needed nbfc-linux-git. NÃO habilite nbfc.service.")
         issues, _, _ = dependency_plan()
         if issues:
             print("Fan+: indisponível até resolver as dependências. Execute novamente scripts/install-fanplus; use --install-deps para os pacotes dos repositórios Arch/CachyOS.")
@@ -130,3 +142,27 @@ def setup(root, *, check_only=False, install_dependencies=False, provider=None):
           + ("acpi_call carregado." if loaded else "acpi_call será carregado pelo helper quando solicitado."))
     print("Fan+: nenhuma alteração no controle da ventoinha, no perfil de energia ou no boot.")
     return True
+
+
+def setup(root, *, check_only=False, install_dependencies=False, provider=None):
+    provider = provider or Provider()
+    result = _setup(root, check_only=check_only,
+                    install_dependencies=install_dependencies, provider=provider)
+    if not provider.supported:
+        print("Fan+:\n  hardware: unsupported\n  status: OPTIONAL")
+        return result
+    loaded = Path("/proc/acpi/call").exists()
+    if result and install_dependencies and not check_only and not loaded:
+        privileged(["/usr/bin/modprobe", "acpi_call"])
+        loaded = Path("/proc/acpi/call").exists()
+    checks = {
+        "ec_probe": os.access("/usr/bin/ec_probe", os.X_OK),
+        "acpi_call": loaded and run(["/usr/bin/modinfo", "-k", platform.release(), "acpi_call"]).returncode == 0,
+        "helper": verified_copy(root / "hardware/fan/privileged_helper.py", provider.HELPER, 0o755),
+        "polkit": os.access("/usr/bin/pkexec", os.X_OK) and verified_copy(root / "hardware/fan/org.velora.fanplus.policy", provider.POLICY, 0o644),
+    }
+    print("Fan+:\n  hardware: supported")
+    for name, ready in checks.items():
+        print("  " + name + ": " + ("PASS" if ready else "FAIL"))
+    print("  status: " + ("READY" if result and all(checks.values()) else "PENDING"))
+    return result
