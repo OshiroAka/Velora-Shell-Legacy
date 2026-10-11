@@ -71,7 +71,8 @@ Feature dependencies include `playerctl`, `wpctl`, NetworkManager (`nmcli`),
 BlueZ (`bluetoothctl`), `brightnessctl`, `powerprofilesctl`, `xdg-open`,
 `notify-send`, `ffmpeg`, ImageMagick, Pillow, `wal` (pywal16), `zenity`,
 `grim` and `slurp`. Wallpapers use `awww`/`swww`, `mpvpaper`, or
-`linux-wallpaperengine`. Optional integrations include cava/glava,
+`linux-wallpaperengine` built against the installed FFmpeg libraries.
+Optional integrations include cava/glava,
 EasyEffects, Kitty, terminal themes and application themes.
 
 Spotify catalogue search requires Spotify with Spicetify. Add the extension

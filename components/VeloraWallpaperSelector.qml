@@ -32,13 +32,7 @@ Item {
     readonly property string visibilityScript: Quickshell.shellDir + "/scripts/velora-wallpaper-visibility"
     readonly property var filterKeys: ["all", "static", "live", "engine"]
     readonly property var modeFilterIndexes: [1, 2, 3]
-    readonly property var fallbackWallpapers: [
-        { kind: "static", label: "Tokyo Fuji", title: "Tokyo Fuji", category: "Imagem estática", path: wallpaperDir + "/static/aerial-view-tokyo-cityscape-with-fuji-mountain-japan.jpg", preview: wallpaperDir + "/static/aerial-view-tokyo-cityscape-with-fuji-mountain-japan.jpg" },
-        { kind: "static", label: "Rua urbana", title: "city street", category: "Imagem estática", path: wallpaperDir + "/static/claudio-guglieri-G6X3OZqIIm8-unsplash.jpg", preview: wallpaperDir + "/static/claudio-guglieri-G6X3OZqIIm8-unsplash.jpg" },
-        { kind: "static", label: "Garota branca", title: "Garota branca", category: "Imagem estática", path: wallpaperDir + "/static/anime-anime-devushki-anime-anime-girls-belye-volosy-golub-zh.jpg", preview: wallpaperDir + "/static/anime-anime-devushki-anime-anime-girls-belye-volosy-golub-zh.jpg" },
-        { kind: "static", label: "Vitrine", title: "storefront", category: "Imagem estática", path: wallpaperDir + "/static/clay-banks-hwLAI5lRhdM-unsplash.jpg", preview: wallpaperDir + "/static/clay-banks-hwLAI5lRhdM-unsplash.jpg" },
-        { kind: "static", label: "Pagode azul", title: "blue pagoda", category: "Imagem estática", path: wallpaperDir + "/static/cosmin-georgian-gd3ysFyrsTQ-unsplash.jpg", preview: wallpaperDir + "/static/cosmin-georgian-gd3ysFyrsTQ-unsplash.jpg" }
-    ]
+    readonly property var fallbackWallpapers: []
 
     property int activeFilter: 1
     property int selectedIndex: 2
@@ -293,11 +287,11 @@ Item {
     function currentWallpaper() {
         if (root.wallpapers.length > 0)
             return root.wallpapers[root.normalizedIndex()]
-        return root.fallbackWallpapers[0]
+        return (root.fallbackWallpapers[0] || ({}))
     }
 
     function currentWallpaperPath() {
-        return root.currentWallpaper().path
+        return root.currentWallpaper().path || ""
     }
 
     function currentWallpaperPreview() {
@@ -475,7 +469,7 @@ Item {
 
     function wheelWallpaper(slot) {
         if (root.wallpapers.length <= 0)
-            return root.fallbackWallpapers[0]
+            return (root.fallbackWallpapers[0] || ({}))
         return root.wallpapers[root.wheelIndex(slot)]
     }
 
@@ -558,6 +552,8 @@ Item {
         if (applyWallpaper.running)
             return
         const item = root.currentWallpaper()
+        if (!item.path)
+            return
         applyPulseAnimation.restart()
         applyWallpaper.command = [root.applyScript, item.kind || "static", item.path, root.displaySource(item)]
         applyWallpaper.running = true
@@ -1285,7 +1281,7 @@ Item {
 
                         required property int index
                         readonly property int wallpaperIndex: coverflowStage.coverIndex(index)
-                        readonly property var entry: root.wallpapers.length > wallpaperIndex ? root.wallpapers[wallpaperIndex] : root.fallbackWallpapers[0]
+                        readonly property var entry: root.wallpapers.length > wallpaperIndex ? root.wallpapers[wallpaperIndex] : (root.fallbackWallpapers[0] || ({}))
                         readonly property real offset: coverflowStage.slotOffset(index)
                         readonly property real distance: Math.abs(offset)
                         readonly property real focusAmount: Math.max(0, 1 - Math.min(1, distance))
@@ -1397,7 +1393,7 @@ Item {
             function entryForSlot(slot) {
                 const count = root.wallpapers.length
                 if (count <= 0)
-                    return root.fallbackWallpapers[0]
+                    return (root.fallbackWallpapers[0] || ({}))
                 const index = (root.selectedIndex + slotOffset(slot) + count) % count
                 return root.wallpapers[index]
             }

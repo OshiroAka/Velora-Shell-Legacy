@@ -220,9 +220,7 @@ Item {
         const bPaired = b && (b.bonded || b.paired) ? 1 : 0
         return (bConnected - aConnected) || (bPaired - aPaired) || root.textOf(a ? a.name : "").localeCompare(root.textOf(b ? b.name : ""))
     }) : []
-    readonly property var fallbackWallpapers: [
-        { kind: "static", label: "Tokyo Fuji", title: "Tokyo Fuji", category: "Static", path: wallpaperDir + "/static/aerial-view-tokyo-cityscape-with-fuji-mountain-japan.jpg", preview: wallpaperDir + "/static/aerial-view-tokyo-cityscape-with-fuji-mountain-japan.jpg" }
-    ]
+    readonly property var fallbackWallpapers: []
     property var wallpaperItems: []
     property var hiddenWallpapers: []
     property bool wallpaperVisibilityLoaded: false

@@ -63,10 +63,7 @@ Item {
     property bool wallpaperLoadedOnce: false
     property bool wallpaperScanComplete: false
     property string wallpaperApplyState: ""
-    readonly property var fallbackWallpapers: [
-        { kind: "static", title: "Tokyo Fuji", label: "Tokyo Fuji", category: "Static", path: wallpaperDir + "/static/aerial-view-tokyo-cityscape-with-fuji-mountain-japan.jpg", preview: wallpaperDir + "/static/aerial-view-tokyo-cityscape-with-fuji-mountain-japan.jpg" },
-        { kind: "static", title: "city street", label: "city street", category: "Static", path: wallpaperDir + "/static/claudio-guglieri-G6X3OZqIIm8-unsplash.jpg", preview: wallpaperDir + "/static/claudio-guglieri-G6X3OZqIIm8-unsplash.jpg" }
-    ]
+    readonly property var fallbackWallpapers: []
 
     function alpha(colorValue, opacity) {
         return root.theme ? root.theme.alpha(colorValue, opacity) : Qt.rgba(colorValue.r, colorValue.g, colorValue.b, opacity)

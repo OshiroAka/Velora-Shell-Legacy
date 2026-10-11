@@ -556,7 +556,7 @@ start_transition_preloader() {
 
   ensure_wayland_env
   monitors="$(hyprctl monitors -j 2>/dev/null | python3 -c 'import json,sys; data=json.load(sys.stdin); print(" ".join(m.get("name","") for m in data if m.get("name")))' 2>/dev/null || true)"
-  [ -n "$monitors" ] || monitors="eDP-1"
+  [ -n "$monitors" ] || return 0
   first_monitor="${monitors%% *}"
   first_socket="$(mpv_wallpaper_socket "$first_monitor")"
   if [ -S "$first_socket" ]; then
@@ -964,10 +964,16 @@ start_engine_wallpaper_process() {
   local id="$1"
   local engine_bin
   local unit
+  local monitor
 
   engine_bin="$(command -v linux-wallpaperengine)"
   unit="velora-wallpaperengine"
   ensure_wayland_env
+  monitor="$(hyprctl monitors -j 2>/dev/null | python3 -c 'import json,sys; data=json.load(sys.stdin); focused=[m for m in data if m.get("focused")]; print(next((m["name"] for m in focused + data if m.get("name")), ""))' 2>/dev/null || true)"
+  if [ -z "$monitor" ]; then
+    printf '%s\n' 'Velora: nenhum monitor disponível para Wallpaper Engine.' >&2
+    return 1
+  fi
 
   if command -v systemd-run >/dev/null 2>&1; then
     systemctl --user reset-failed "${unit}.service" >/dev/null 2>&1 || true
@@ -980,12 +986,12 @@ start_engine_wallpaper_process() {
       --unit="$unit" \
       --collect \
       --quiet \
-      "$engine_bin" --screen-root eDP-1 --bg "$id" --scaling fill --clamp border --disable-mouse --disable-parallax >/dev/null 2>&1; then
+      "$engine_bin" --screen-root "$monitor" --bg "$id" --scaling fill --clamp border --disable-mouse --disable-parallax >/dev/null 2>&1; then
       return 0
     fi
   fi
 
-  setsid -f "$engine_bin" --screen-root eDP-1 --bg "$id" --scaling fill --clamp border --disable-mouse --disable-parallax >/tmp/velora-wallpaperengine.log 2>&1 </dev/null 9>&- || return 1
+  setsid -f "$engine_bin" --screen-root "$monitor" --bg "$id" --scaling fill --clamp border --disable-mouse --disable-parallax >/tmp/velora-wallpaperengine.log 2>&1 </dev/null 9>&- || return 1
 }
 
 apply_theme() {
@@ -1279,7 +1285,10 @@ live_wallpaper() {
   [ -f "$file" ] || exit 2
 
   monitors="$(hyprctl monitors -j 2>/dev/null | python3 -c 'import json,sys; data=json.load(sys.stdin); print(" ".join(m.get("name","") for m in data if m.get("name")))' 2>/dev/null || true)"
-  [ -n "$monitors" ] || monitors="eDP-1"
+  if [ -z "$monitors" ]; then
+    printf '%s\n' 'Velora: nenhum monitor disponível para wallpaper animado.' >&2
+    return 1
+  fi
 
   stop_engine_wallpapers
   if command -v mpvpaper >/dev/null 2>&1; then
