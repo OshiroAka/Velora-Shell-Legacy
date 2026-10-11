@@ -68,7 +68,6 @@ KITTY_AUTO_THEMES = (
 MANAGED_KEYS = {
     "foreground",
     "background",
-    "background_opacity",
     "cursor",
     "cursor_text_color",
     "selection_background",
@@ -1048,6 +1047,9 @@ def backup_auto_theme_once(path):
         return ""
 
 
+AUTO_THEME_MARKER = "# Managed by Velora pywal; original preserved alongside this file.\n"
+
+
 def sync_kitty_auto_themes(theme_text):
     """
     Mirror the Velora theme into every Kitty automatic-theme fragment that
@@ -1070,7 +1072,9 @@ def sync_kitty_auto_themes(theme_text):
     synced = []
     backups = {}
 
-    for path in KITTY_AUTO_THEMES:
+    theme_text = AUTO_THEME_MARKER + theme_text
+    for name in ("dark", "light", "no-preference"):
+        path = KITTY_DIR / (name + "-theme.auto.conf")
         if not path.exists():
             continue
 
