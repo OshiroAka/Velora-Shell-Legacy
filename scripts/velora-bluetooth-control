@@ -167,9 +167,9 @@ scan_devices() {
   if [ "$(adapter_powered)" != "yes" ]; then
     bluetoothctl power on >/dev/null 2>&1 || fail "scan" "failed to power adapter"
   fi
-  bluetoothctl scan on >/dev/null 2>&1 || fail "scan" "failed to start discovery"
-  sleep "$seconds"
-  bluetoothctl scan off >/dev/null 2>&1 || true
+  # Discovery belongs to the DBus client that requested it. Keep bluetoothctl
+  # alive for the whole scan instead of exiting immediately and sleeping.
+  bluetoothctl --timeout "$seconds" scan on || fail "scan" "failed to start discovery"
   ok "scan" "$seconds"
 }
 

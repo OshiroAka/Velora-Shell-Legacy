@@ -4,8 +4,12 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 import tempfile
+import importlib.machinery
+import importlib.util
 from pathlib import Path
+sys.dont_write_bytecode = True
 
 root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
@@ -14,31 +18,69 @@ parser.add_argument("--build-dir", type=Path)
 args = parser.parse_args()
 env = os.environ.copy()
 runtime_bin = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "velora-shell/runtime/quickshell/bin"
-env["PATH"] = str(runtime_bin) + os.pathsep + env.get("PATH", "")
+loader = importlib.machinery.SourceFileLoader("velora_preflight", str(root / "scripts/preflight"))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+preflight = importlib.util.module_from_spec(spec)
+loader.exec_module(preflight)
+selected, errors = preflight.select_quickshell()
+if not selected:
+    raise SystemExit("\n".join(errors))
+executable = selected["path"]
 if args.parse:
     build = args.build_dir or Path(subprocess.check_output([str(root / "scripts/build")], text=True).strip())
     env.update(QT_QPA_PLATFORM="wayland", VELORA_VALIDATE="1",
                QML_IMPORT_PATH=f"{build}/visualizer/qml:{build}/spectrum/qml")
     with tempfile.TemporaryDirectory(prefix="velora-validation-") as temporary:
         env["XDG_CACHE_HOME"] = temporary + "/cache"
-        process = subprocess.Popen(["qs", "-p", str(root)], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        display = env.get("WAYLAND_DISPLAY", "")
+        if display and not os.path.isabs(display):
+            display = str(Path(env.get("XDG_RUNTIME_DIR", "/run/user/" + str(os.getuid()))) / display)
+        if not display or not Path(display).is_socket():
+            raise SystemExit("QML parse requires an accessible Wayland socket; use an isolated headless compositor for offline validation.")
+        env["WAYLAND_DISPLAY"] = display
+        Path(temporary + "/runtime").mkdir(mode=0o700)
+        env["XDG_RUNTIME_DIR"] = temporary + "/runtime"
+        process = subprocess.Popen([executable, "-p", str(root)], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         try:
             output, _ = process.communicate(timeout=30)
         except subprocess.TimeoutExpired:
             process.terminate()
             output, _ = process.communicate(timeout=5)
         print(output)
-        if "Configuration Loaded" not in output or "ERROR" in output or "unresolvable import" in output:
+        if "Configuration Loaded" not in output or "ERROR" in output or "unresolvable import" in output or process.returncode not in (0, -15):
             raise SystemExit(1)
 else:
-    result = subprocess.run(["qs", "-p", str(root), "ipc", "call", "composition", "status"], env=env, capture_output=True, text=True)
+    result = subprocess.run([executable, "-p", str(root), "ipc", "call", "composition", "status"], env=env, capture_output=True, text=True, timeout=10)
     if result.returncode:
         raise SystemExit(result.stderr.strip() or "Velora Shell is not responding in this session")
     state = json.loads(result.stdout)
     native = json.loads(subprocess.check_output(["python3", str(root / "scripts/native-blur"), "status"], env=env, text=True))
     if not state.get("ready") or state.get("configurationError") or state["compositionProfiles"].get("error"):
         raise SystemExit("Velora Shell reports an initialization error")
+    appearance = state.get("appearance", {})
+    if appearance.get("accentMode") == "wallpaper" and appearance.get("wallpaper") and not appearance.get("pywalReady"):
+        raise SystemExit("Wallpaper palette not ready: " + (appearance.get("pywalError") or "generation pending"))
+    result = subprocess.run([sys.executable, str(root / 'scripts/velora-notifications'), 'status'], env=env, capture_output=True, text=True, timeout=15)
+    if result.returncode:
+        raise SystemExit('Velora notification server not registered: ' + result.stdout + result.stderr)
+    notification_state = json.loads(result.stdout)
+    result = subprocess.run([sys.executable, str(root / 'scripts/velora-bluetooth-setup')],
+                            env=env, capture_output=True, text=True, timeout=15)
+    if result.returncode:
+        raise SystemExit('Bluetooth prerequisites not inspected: ' + result.stderr)
+    bluetooth_state = json.loads(result.stdout)
+    if bluetooth_state['hardware']:
+        if not bluetooth_state['active'] or not bluetooth_state['enabled']:
+            raise SystemExit('Bluetooth service must be active and enabled; run install.sh --enable-bluetooth after reviewing its effect')
+        result = subprocess.run([executable, '-p', str(root), 'ipc', 'call', 'velora', 'bluetoothState'],
+                                env=env, capture_output=True, text=True, timeout=10)
+        if result.returncode:
+            raise SystemExit('Velora Bluetooth IPC not responding: ' + result.stderr)
+        bluetooth_state['surfaces'] = json.loads(result.stdout)
+        if any(not surface['available'] for surface in bluetooth_state['surfaces']):
+            raise SystemExit('Velora has no Bluetooth adapter despite active BlueZ; restart the shell to refresh its Bluetooth connection')
     print(json.dumps({"ready": state["ready"], "widgets": state["sharedWidgets"]["count"],
                       "profiles": state["compositionProfiles"]["count"],
                       "nativeVisualizer": state["visualizer"]["native"],
-                      "topbar": state["topbar"]["enabled"], "nativeBlur": native}))
+                      "topbar": state["topbar"]["enabled"], "paletteReady": appearance.get("pywalReady"),
+                      "notifications": notification_state, "bluetooth": bluetooth_state, "nativeBlur": native}))

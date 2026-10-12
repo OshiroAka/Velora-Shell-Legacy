@@ -5,9 +5,16 @@ misc {
     force_default_wallpaper = 0
     disable_hyprland_logo = true
 }
-layerrule = blur on, match:namespace ^velora-shell($|-.*)
-layerrule = blur_popups on, match:namespace ^velora-shell($|-.*)
-layerrule = ignore_alpha 0.02, match:namespace ^velora-shell($|-.*)
+# Workspace direction follows navigation; shell layers stay fixed.
+animations {
+    bezier = veloraWorkspaceSlide, 0.4, 0, 0.2, 1
+    animation = workspaces, 1, 9, veloraWorkspaceSlide, slidevert
+    animation = workspacesIn, 1, 9, veloraWorkspaceSlide, slidevert
+    animation = workspacesOut, 1, 9, veloraWorkspaceSlide, slidevert
+}
+layerrule = blur on, match:namespace ^velora-shell-(topbar|unified-bar|shared-widgets|editor|lock-preview-desktop|lock-preview-panel|left-menu|drawers|frame)$
+layerrule = blur_popups on, match:namespace ^velora-shell-(topbar|unified-bar|shared-widgets|editor|lock-preview-desktop|lock-preview-panel|left-menu|drawers|frame)$
+layerrule = ignore_alpha 0.02, match:namespace ^velora-shell-(topbar|unified-bar|shared-widgets|editor|lock-preview-desktop|lock-preview-panel|left-menu|drawers|frame)$
 layerrule = blur on, match:namespace ^velora-notification-frame$
 layerrule = blur_popups on, match:namespace ^velora-notification-frame$
 layerrule = ignore_alpha 0.02, match:namespace ^velora-notification-frame$
@@ -17,6 +24,7 @@ layerrule = blur off, match:namespace ^velora-wallpaper-selector$
 bind = SUPER, K, exec, "@ROOT@/scripts/velora" ipc velora topWallpaper
 bind = SUPER, W, exec, "@ROOT@/scripts/velora" ipc velora search
 bind = SUPER, R, exec, "@ROOT@/scripts/velora" ipc velora settings
+bind = SUPER, F, exec, "@ROOT@/scripts/velora-browser"
 unbind = , XF86AudioRaiseVolume
 unbind = , XF86AudioLowerVolume
 unbind = , XF86MonBrightnessUp

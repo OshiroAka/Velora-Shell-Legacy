@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""Resolve a pywal16 executable, preferring a compatible existing installation."""
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+
+sys.dont_write_bytecode = True
+
+
+def runtime_directory():
+    return Path(os.environ.get('XDG_DATA_HOME') or Path.home() / '.local/share') / 'velora-shell/runtime/pywal'
+
+
+def select_wal():
+    private = runtime_directory() / 'bin/wal'
+    candidates = list(dict.fromkeys(p for p in (shutil.which('wal'), str(private) if private.is_file() else None) if p))
+    errors = []
+    for executable in candidates:
+        try:
+            # Even --help imports pywal settings, which create directories.
+            # Capability/version probes must not touch personal configuration.
+            with tempfile.TemporaryDirectory(prefix='velora-wal-probe-') as directory:
+                env = dict(os.environ, XDG_CONFIG_HOME=directory + '/config',
+                           XDG_CACHE_HOME=directory + '/cache', PYWAL_CACHE_DIR=directory + '/wal')
+                result = subprocess.run([executable, '--help'], env=env, capture_output=True, text=True, timeout=5)
+                if result.returncode or not all(flag in result.stdout for flag in ('--cols16', '--out-dir')):
+                    raise RuntimeError('pywal16 necessário (--cols16 e --out-dir)')
+                label = subprocess.run([executable, '-v'], env=env, capture_output=True, text=True, timeout=5)
+                if label.returncode: raise RuntimeError(label.stderr)
+            return {'path': executable, 'version': (label.stdout + label.stderr).strip()}, errors
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            errors.append(str(error))
+    return {}, errors or ['pywal16 não encontrado']
+
+
+if __name__ == '__main__':
+    selected, errors = select_wal()
+    if not selected: raise SystemExit('; '.join(errors))
+    if sys.argv[1:] == ['--resolve']: print(selected['path'])
+    else: os.execv(selected['path'], [selected['path'], *sys.argv[1:]])

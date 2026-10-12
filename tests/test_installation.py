@@ -21,13 +21,21 @@ class InstallationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)
             env = self.environment(home)
-            command = [str(ROOT / "install.sh"), "--skip-hypr", "--without-fanplus"]
-            subprocess.run(command, env=env, check=True, capture_output=True)
+            loader = importlib.machinery.SourceFileLoader("installer", str(ROOT / "scripts/install-session"))
+            spec = importlib.util.spec_from_loader(loader.name, loader)
+            installer = importlib.util.module_from_spec(spec)
+            loader.exec_module(installer)
+            from unittest.mock import patch
+            with patch.dict(os.environ, env):
+                installer.install_links()
+            subprocess.run([str(ROOT / "scripts/init-config")], env=env, check=True, capture_output=True)
             config = home / "config/velora-shell/config.json"
             document = json.loads(config.read_text())
             document["profile"]["displayName"] = "Test user"
             config.write_text(json.dumps(document))
-            subprocess.run(command, env=env, check=True, capture_output=True)
+            with patch.dict(os.environ, env):
+                installer.install_links()
+            subprocess.run([str(ROOT / "scripts/init-config")], env=env, check=True, capture_output=True)
             self.assertEqual(json.loads(config.read_text())["profile"]["displayName"], "Test user")
             self.assertEqual((home / ".local/bin/velora").resolve(), ROOT / "scripts/velora")
             self.assertFalse((home / "config/hypr/hyprland.conf").exists())

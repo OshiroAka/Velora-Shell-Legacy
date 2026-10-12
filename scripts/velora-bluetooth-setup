@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""Inspect Bluetooth prerequisites; enable its service only with explicit consent."""
+import argparse
+import json
+from pathlib import Path
+import subprocess
+
+
+def hardware_present():
+    if any(Path('/sys/class/bluetooth').glob('hci*')):
+        return True
+    for entry in Path('/sys/class/rfkill').glob('rfkill*/type'):
+        try:
+            if entry.read_text().strip() == 'bluetooth':
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def status():
+    present = hardware_present()
+    state = {'hardware': present, 'active': False, 'enabled': False, 'blocked': False}
+    if not present:
+        return state
+    for field, option in [('active', 'is-active'), ('enabled', 'is-enabled')]:
+        result = subprocess.run(['systemctl', option, 'bluetooth.service'],
+                                capture_output=True, text=True, timeout=10)
+        state[field] = result.stdout.strip() == ('active' if field == 'active' else 'enabled')
+    for entry in Path('/sys/class/rfkill').glob('rfkill*'):
+        try:
+            if (entry / 'type').read_text().strip() == 'bluetooth':
+                state['blocked'] |= (entry / 'soft').read_text().strip() == '1' or (entry / 'hard').read_text().strip() == '1'
+        except OSError:
+            pass
+    return state
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--enable-service', action='store_true', help='Authorize persistent service activation; radio state is preserved')
+    args = parser.parse_args()
+    if args.enable_service:
+        result = subprocess.run(['sudo', 'systemctl', 'enable', '--now', 'bluetooth.service'])
+        if result.returncode:
+            return result.returncode
+    print(json.dumps(status()))
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

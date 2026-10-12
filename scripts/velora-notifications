@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Inspect notification ownership and claim only an explicitly approved daemon."""
+import argparse
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+sys.dont_write_bytecode = True
+ROOT = Path(__file__).resolve().parents[1]
+KNOWN = {'dunst': 'dunst.service', 'mako': 'mako.service', 'swaync': 'swaync.service'}
+
+
+def call(arguments, check=True):
+    result = subprocess.run(arguments, capture_output=True, text=True, timeout=10)
+    if check and result.returncode: raise RuntimeError((result.stderr or result.stdout).strip())
+    return result
+
+
+def preference():
+    return Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'velora-shell/notifications-provider'
+
+
+def status():
+    ownership = call(['busctl', '--user', 'call', 'org.freedesktop.DBus', '/org/freedesktop/DBus',
+                      'org.freedesktop.DBus', 'NameHasOwner', 's', 'org.freedesktop.Notifications'])
+    if ownership.stdout.strip() == 'b false':
+        return {'ready': False, 'conflict': False, 'pid': None, 'daemon': '', 'unit': None}
+    result = call(['busctl', '--user', 'call', 'org.freedesktop.DBus', '/org/freedesktop/DBus',
+                   'org.freedesktop.DBus', 'GetConnectionUnixProcessID', 's', 'org.freedesktop.Notifications'], check=False)
+    if result.returncode: raise RuntimeError(result.stderr)
+    pid = int(result.stdout.split()[1])
+    executable = Path(os.readlink(f'/proc/{pid}/exe')).name
+    qs = call([sys.executable, str(ROOT / 'scripts/preflight'), '--quickshell']).stdout.strip()
+    instances = json.loads(call([qs, '-p', str(ROOT), 'list', '--json']).stdout)
+    owned = any(instance.get('pid') == pid for instance in instances)
+    return {'ready': owned, 'conflict': not owned, 'pid': pid, 'daemon': executable,
+            'unit': KNOWN.get(executable)}
+
+
+def claim():
+    if not preference().is_file() or preference().read_text().strip() != 'velora': return
+    state = status()
+    if not state['conflict']: return
+    if not state['unit']: raise RuntimeError('Servidor de notificações desconhecido preservado: ' + state['daemon'])
+    main_pid = call(['systemctl', '--user', 'show', state['unit'], '-p', 'MainPID', '--value']).stdout.strip()
+    if main_pid != str(state['pid']): raise RuntimeError('Daemon não pertence ao serviço esperado; processo preservado.')
+    call(['systemctl', '--user', 'stop', state['unit']])
+    print('Notificações: ' + state['daemon'] + ' parado nesta sessão; Velora assume o serviço D-Bus.')
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('command', choices=['status', 'claim'])
+    args = parser.parse_args()
+    try:
+        if args.command == 'claim': claim()
+        else:
+            value = status(); print(json.dumps(value)); raise SystemExit(0 if value['ready'] else 1)
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error: raise SystemExit(str(error))

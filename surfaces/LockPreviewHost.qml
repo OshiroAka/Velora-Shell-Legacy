@@ -25,7 +25,9 @@ Variants {
     required property int opticsGeneration
     property bool settingsVisible: false
 
-    model: controller.mounted && compositor.focusedScreen
+    // A warmed scene must not map transparent fullscreen effect surfaces.
+    // Keep the pair alive through the exit animation, then unmap it.
+    model: controller.occluding && compositor.focusedScreen
         ? [compositor.focusedScreen] : []
 
     Scope {

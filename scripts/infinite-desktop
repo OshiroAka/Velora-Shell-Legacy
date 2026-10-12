@@ -12,6 +12,7 @@ import json
 import math
 import os
 import random
+import re
 import select
 import struct
 import subprocess
@@ -68,11 +69,11 @@ def notify(message: str, force: bool = False) -> None:
     """Only state changes deserve a desktop notification, never navigation."""
     if not force:
         return
-    subprocess.Popen(
-        ["notify-send", "Infinite Desktop", message],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    try:
+        subprocess.Popen(["notify-send", "Infinite Desktop", message],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        print("Infinite Desktop: " + message, file=sys.stderr)
 
 
 def enabled() -> bool:
@@ -281,16 +282,57 @@ def hyprctl_json(command: str) -> Any:
         raise HyprlandError("Hyprland retornou uma resposta inválida") from error
 
 
+def lua_dispatch(command: str) -> str:
+    """Translate only the existing canvas actions to Hyprland's Lua API."""
+    if not command.startswith("dispatch "):
+        raise HyprlandError("comando de canvas não suportado")
+    name, _, arguments = command[len("dispatch "):].partition(" ")
+    if name == "movefocus":
+        direction = {"l": "left", "r": "right", "u": "up", "d": "down"}.get(arguments)
+        if direction:
+            return "hl.dsp.focus({direction=" + json.dumps(direction) + "})"
+    if name == "workspace":
+        return "hl.dsp.focus({workspace=" + json.dumps(arguments) + "})"
+    if name == "focuswindow":
+        return "hl.dsp.focus({window=" + json.dumps(arguments) + "})"
+    if name in ("setfloating", "settiled"):
+        return "hl.dsp.window.float({action=" + json.dumps("set" if name == "setfloating" else "unset") + ",window=" + json.dumps(arguments) + "})"
+    if name == "movecursor" and re.fullmatch(r"-?\d+ -?\d+", arguments):
+        x, y = arguments.split()
+        return f"hl.dsp.cursor.move({{x={x},y={y}}})"
+    if name in ("movewindowpixel", "resizewindowpixel"):
+        match = re.fullmatch(r"exact (-?\d+) (-?\d+),address:(0x[0-9a-fA-F]+)", arguments)
+        if match:
+            x, y, address = match.groups()
+            method = "move" if name == "movewindowpixel" else "resize"
+            return f"hl.dsp.window.{method}({{x={x},y={y},relative=false,window=" + json.dumps("address:" + address) + "})"
+    raise HyprlandError("ação de canvas não suportada pelo transporte Lua: " + command)
+
+
+_hyprland_backend = None
+
+
 def hyprctl_batch(commands: list[str]) -> None:
     if not commands:
         return
+    global _hyprland_backend
+    if _hyprland_backend is None:
+        info = subprocess.run(["hyprctl", "systeminfo"], text=True, capture_output=True, timeout=10)
+        if info.returncode:
+            raise HyprlandError("não foi possível identificar o transporte Hyprland")
+        _hyprland_backend = "lua" if "configProvider: lua" in info.stdout else "legacy"
+    if _hyprland_backend == "lua":
+        payload = " ".join("hl.dispatch(" + lua_dispatch(item) + ")" for item in commands)
+        arguments = ["hyprctl", "eval", payload]
+    else:
+        arguments = ["hyprctl", "--batch", " ; ".join(commands)]
     result = subprocess.run(
-        ["hyprctl", "--batch", " ; ".join(commands)],
+        arguments,
         text=True,
         capture_output=True,
         check=False,
     )
-    if result.returncode:
+    if result.returncode or "error:" in result.stdout.lower():
         raise HyprlandError(result.stderr.strip() or result.stdout.strip())
 
 

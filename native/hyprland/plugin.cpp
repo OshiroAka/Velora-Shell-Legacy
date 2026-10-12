@@ -1,4 +1,5 @@
 #include <hyprland/src/config/ConfigValue.hpp>
+#include <hyprland/src/config/ConfigManager.hpp>
 #include <hyprland/src/config/values/types/FloatValue.hpp>
 #include <hyprland/src/config/values/types/IntValue.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
@@ -25,6 +26,8 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <hyprutils/utils/ScopeGuard.hpp>
+#include <lua.hpp>
 
 namespace {
 constexpr auto DESKTOP_NAMESPACE = "velora-shell-lock-preview-desktop";
@@ -195,6 +198,7 @@ const STopbarMorph& unifiedBarShape(const std::string& monitor) {
     return found == g_unifiedBarShapes.end() ? empty : found->second;
 }
 bool g_barBlurEnabled = true;
+bool g_luaDispatch = false;
 uint64_t g_topbarBlurDraws = 0;
 uint64_t g_sidebarBlurDraws = 0;
 uint64_t g_waveBlurDraws = 0;
@@ -2574,6 +2578,15 @@ void hkDrawTex(Render::IElementRenderer* renderer, WP<CTexPassElement> element, 
         original(renderer, element, damage);
         return;
     }
+    // Hyprland's shader blur blend otherwise fills transparent texels with
+    // an opaque backdrop. Our layers can span a monitor, while only their
+    // QML material pixels are visible. Request the alpha-mask shader variant
+    // for the regular QML pass, including the glass/fallback branches below.
+    const bool oldForceBlurBlend = element->m_data.forceBlurBlend;
+    element->m_data.forceBlurBlend = true;
+    Hyprutils::Utils::CScopeGuard restoreBlurMask{[element, oldForceBlurBlend]() {
+        element->m_data.forceBlurBlend = oldForceBlurBlend;
+    }};
     const auto material = layer->m_monitor
         ? g_desktopBarMaterials.find(layer->m_monitor->m_name) : g_desktopBarMaterials.end();
     if (layer->m_namespace == EDITOR_NAMESPACE
@@ -2717,25 +2730,48 @@ void hkGLDrawTex(Render::GL::CGLElementRenderer* renderer, WP<CTexPassElement> e
         return;
     }
 
-    const auto material = g_desktopBarMaterials.find(monitorName);
-    if (unifiedBar && g_barBlurEnabled && material != g_desktopBarMaterials.end()
-            && material->second.mode == 1 && element->m_data.blurredBG) {
-        // The native outline has no QML fill. Preserve the alpha-clipped
-        // compositor blur for the remaining QML panels and foreground.
-        original(renderer, element, damage);
-        return;
-    }
-
     // The native material has already rendered Hyprland blur or refraction.
     // Draw only the transparent QML surface and its foreground content now;
-    // letting Hyprland blend its regular blur again would flatten the lens.
+    // letting Hyprland blend its regular blur again would flatten the lens
+    // and replace antialiased text/corner pixels with an opaque bright
+    // backdrop. This applies to glass as well as liquid materials.
     const bool oldBlur = element->m_data.blur;
     element->m_data.blur = false;
     original(renderer, element, damage);
     element->m_data.blur = oldBlur;
 }
 
+int luaDispatch(lua_State* state) {
+    const std::string name = luaL_checkstring(state, 1);
+    const std::string arguments = luaL_checkstring(state, 2);
+    // Expose only this plugin's validated dispatchers, never arbitrary eval.
+    static const std::unordered_map<std::string, SDispatchResult (*)(std::string)> handlers = {
+        {"transition", transitionDispatcher}, {"dial", dialDispatcher},
+        {"caustics", causticsDispatcher}, {"topbar-connected", connectedTopbarDispatcher},
+        {"bar-blur", barBlurDispatcher}, {"widget-blur", widgetBlurDispatcher},
+        {"liquid-style", liquidStyleDispatcher}, {"wallpaper", wallpaperDispatcher},
+        {"topbar-shape", topbarShapeDispatcher}, {"desktop-bar-material", desktopBarMaterialDispatcher},
+        {"unified-bar-shape", unifiedBarShapeDispatcher}, {"topbar-settle", topbarSettleDispatcher},
+        {"right-menu-shape", rightMenuShapeDispatcher}, {"settings-shape", settingsShapeDispatcher},
+        {"settings-connected", settingsConnectedDispatcher}, {"editor-shape", editorShapeDispatcher},
+        {"selector-shape", selectorShapeDispatcher}, {"appearance", appearanceDispatcher},
+        {"lock-layout", lockLayoutDispatcher}, {"shared-widgets-shape", sharedWidgetsShapeDispatcher}
+    };
+    const auto found = handlers.find(name);
+    if (found == handlers.end()) return luaL_error(state, "unknown Velora dispatcher");
+    const auto result = found->second(arguments);
+    if (!result.success) return luaL_error(state, "%s", result.error.c_str());
+    return 0;
+}
+
 std::string status(eHyprCtlOutputFormat format, std::string) {
+    std::string materials = "[";
+    for (const auto& [name, material] : g_desktopBarMaterials) {
+        if (materials.size() > 1) materials += ",";
+        materials += std::format(R"({{"monitor":"{}","mode":{},"tint":[{},{},{},{}]}})",
+            name, material.mode, material.tint[0], material.tint[1], material.tint[2], material.tint[3]);
+    }
+    materials += "]";
     const auto desktopSize   = g_desktopSize ? g_desktopSize->value() : 0;
     const auto desktopPasses = g_desktopPasses ? g_desktopPasses->value() : 0;
     const auto desktopNoise = g_desktopNoise ? g_desktopNoise->value() : 0.F;
@@ -2773,8 +2809,8 @@ std::string status(eHyprCtlOutputFormat format, std::string) {
 
     if (format == FORMAT_JSON)
         return std::format(
-            R"({{"active":true,"abi":"{}","capabilities":["desktop-bar-material","transition","dial","caustics","topbar-connected","bar-blur","widget-blur","liquid-style","wallpaper","topbar-shape","unified-bar-shape","topbar-settle","right-menu-shape","settings-shape","settings-connected","editor-shape","selector-shape","appearance","lock-layout","shared-widgets-shape"],"wallpaperBlur":{:.3f},"liquidStyle":"{}","backdrop":"sharp-framebuffer","hyprlandBlur":{},"barBlur":{{"enabled":{},"source":"hyprland","topbarDraws":{},"sidebarDraws":{},"waveDraws":{}}},"appearance":{{"blur":{:.3f},"contrast":{:.3f},"reflection":{:.3f},"preview":{}}},"desktop":{{"size":{},"passes":{},"draws":{},"noise":{:.3f},"contrast":{:.3f},"brightness":{:.3f},"vibrancy":{:.3f},"vibrancyDarkness":{:.3f}}},"panel":{{"size":{},"passes":{},"draws":{},"refractionDraws":{},"noise":{:.3f},"contrast":{:.3f},"brightness":{:.3f},"vibrancy":{:.3f},"vibrancyDarkness":{:.3f},"refraction":{:.3f},"edgeWidth":{:.3f},"dispersion":{:.3f},"tint":{:.3f}}},"topbar":{{"size":{},"passes":{},"shapes":{},"draws":{},"refractionDraws":{},"noise":{:.3f},"contrast":{:.3f},"brightness":{:.3f},"vibrancy":{:.3f},"vibrancyDarkness":{:.3f}}},"rightMenu":{{"draws":{},"refractionDraws":{}}},"settings":{{"draws":{},"refractionDraws":{}}},"editor":{{"shapes":{},"draws":{},"refractionDraws":{},"connectedSettings":{}}},"sharedWidgets":{{"blurEnabled":{},"blurDraws":{},"active":{},"shapes":{},"draws":{},"refractionDraws":{},"caustics":{}}},"transition":{{"progress":{:.3f},"animating":{}}},"caustics":{{"enabled":{},"intensity":{:.3f},"lines":{},"animating":{},"frames":{}}}}})",
-            __hyprland_api_get_client_hash(), g_wallpaperBlur, g_liquidFrosted ? "frosted" : "clear", g_barBlurEnabled, g_barBlurEnabled, g_topbarBlurDraws, g_sidebarBlurDraws, g_waveBlurDraws,
+            R"({{"active":true,"abi":"{}","materials":{},"capabilities":[{}"alpha-mask","desktop-bar-material","transition","dial","caustics","topbar-connected","bar-blur","widget-blur","liquid-style","wallpaper","topbar-shape","unified-bar-shape","topbar-settle","right-menu-shape","settings-shape","settings-connected","editor-shape","selector-shape","appearance","lock-layout","shared-widgets-shape"],"wallpaperBlur":{:.3f},"liquidStyle":"{}","backdrop":"sharp-framebuffer","hyprlandBlur":{},"barBlur":{{"enabled":{},"source":"hyprland","topbarDraws":{},"sidebarDraws":{},"waveDraws":{}}},"appearance":{{"blur":{:.3f},"contrast":{:.3f},"reflection":{:.3f},"preview":{}}},"desktop":{{"size":{},"passes":{},"draws":{},"noise":{:.3f},"contrast":{:.3f},"brightness":{:.3f},"vibrancy":{:.3f},"vibrancyDarkness":{:.3f}}},"panel":{{"size":{},"passes":{},"draws":{},"refractionDraws":{},"noise":{:.3f},"contrast":{:.3f},"brightness":{:.3f},"vibrancy":{:.3f},"vibrancyDarkness":{:.3f},"refraction":{:.3f},"edgeWidth":{:.3f},"dispersion":{:.3f},"tint":{:.3f}}},"topbar":{{"size":{},"passes":{},"shapes":{},"draws":{},"refractionDraws":{},"noise":{:.3f},"contrast":{:.3f},"brightness":{:.3f},"vibrancy":{:.3f},"vibrancyDarkness":{:.3f}}},"rightMenu":{{"draws":{},"refractionDraws":{}}},"settings":{{"draws":{},"refractionDraws":{}}},"editor":{{"shapes":{},"draws":{},"refractionDraws":{},"connectedSettings":{}}},"sharedWidgets":{{"blurEnabled":{},"blurDraws":{},"active":{},"shapes":{},"draws":{},"refractionDraws":{},"caustics":{}}},"transition":{{"progress":{:.3f},"animating":{}}},"caustics":{{"enabled":{},"intensity":{:.3f},"lines":{},"animating":{},"frames":{}}}}})",
+            __hyprland_api_get_client_hash(), materials, g_luaDispatch ? "\"lua-dispatch\"," : "", g_wallpaperBlur, g_liquidFrosted ? "frosted" : "clear", g_barBlurEnabled, g_barBlurEnabled, g_topbarBlurDraws, g_sidebarBlurDraws, g_waveBlurDraws,
             g_activeAppearance.blur, g_activeAppearance.contrast,
             g_activeAppearance.reflection,
             g_activeAppearance.preview ? "true" : "false",
@@ -2950,6 +2986,11 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     if (!HyprlandAPI::addDispatcherV2(g_handle, "velora-blur:shared-widgets-shape", sharedWidgetsShapeDispatcher))
         throw std::runtime_error("Velora Shell shared widget shape dispatcher could not be registered");
 
+    if (Config::mgr()->type() == Config::CONFIG_LUA) {
+        g_luaDispatch = HyprlandAPI::addLuaFunction(g_handle, "velora", "dispatch", luaDispatch);
+        if (!g_luaDispatch) throw std::runtime_error("Velora Lua transport could not be registered");
+    }
+
     g_tickListener = Event::bus()->m_events.tick.listen(onTick);
     g_causticsTimer = makeShared<CEventLoopTimer>(
         std::nullopt, onCausticsTimer, nullptr);
@@ -2967,7 +3008,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         .name = "velora-blur",
         .description = "Clear live framebuffer refraction for Velora",
         .author = "Velora Shell",
-        .version = "0.15.0",
+        .version = "0.16.0",
     };
 }
 

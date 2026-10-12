@@ -2,9 +2,9 @@
 set -euo pipefail
 
 command=${1:-start}
-runtime_bin="${XDG_DATA_HOME:-$HOME/.local/share}/velora-shell/runtime/quickshell/bin"
-if [[ -x "$runtime_bin/qs" ]]; then export PATH="$runtime_bin:$PATH"; fi
 project_dir=$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)
+qs_executable=$(python3 "$project_dir/scripts/preflight" --quickshell)
+export PATH="$(dirname "$qs_executable"):$PATH"
 
 default_xdg_runtime_dir() {
     if [[ -z "${XDG_RUNTIME_DIR:-}" && -d "/run/user/$(id -u)" ]]; then
@@ -34,16 +34,15 @@ discover_graphical_session() {
 }
 
 is_running() {
-    qs list --all 2>/dev/null | rg -F "Config path: $project_dir/shell.qml" >/dev/null
+    qs -p "$project_dir" list 2>/dev/null | rg -F "Config path: $project_dir/shell.qml" >/dev/null
 }
 
 start_shell() {
-    is_running && return 0
     if ! discover_graphical_session; then
         printf 'velora: nenhuma sessão Wayland/Hyprland ativa foi encontrada.\n' >&2
         return 1
     fi
-    systemctl --user stop mako.service >/dev/null 2>&1 || true
+    is_running && return 0
     "$project_dir/scripts/run" -d
 }
 
@@ -55,8 +54,9 @@ case "$command" in
         "$project_dir/scripts/stop"
         start_shell
         ;;
-    ipc) shift; exec qs -p "$project_dir" ipc call "$@" ;;
+    ipc) discover_graphical_session || true; shift; exec qs -p "$project_dir" ipc call "$@" ;;
     status|Status)
+        discover_graphical_session || true
         if is_running; then
             qs -p "$project_dir" ipc call composition status
         else

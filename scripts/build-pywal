@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+"""Install pinned pywal16 from PyPI in Velora's private Python environment."""
+import importlib.machinery
+import importlib.util
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import venv
+
+sys.dont_write_bytecode = True
+loader = importlib.machinery.SourceFileLoader('velora_wal', str(Path(__file__).with_name('velora-wal')))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+wal = importlib.util.module_from_spec(spec); loader.exec_module(wal)
+selected, _ = wal.select_wal()
+if selected:
+    print('pywal16 já compatível: ' + selected['path'])
+    raise SystemExit(0)
+target = wal.runtime_directory()
+if target.exists() and not (target / 'pyvenv.cfg').is_file():
+    raise SystemExit('Destino ocupado; preservado: ' + str(target))
+venv.EnvBuilder(with_pip=True).create(target)
+with tempfile.TemporaryDirectory(prefix='velora-pywal-install-') as directory:
+    requirements = Path(directory) / 'requirements.txt'
+    requirements.write_text('pywal16==3.8.15 --hash=sha256:7b463c184bffd5c015743f0e9fa0c5983f31928325ca74a011db2c8d70c80a68\n')
+    subprocess.run([str(target / 'bin/python'), '-m', 'pip', 'install', '--index-url', 'https://pypi.org/simple',
+                    '--only-binary=:all:', '--no-deps', '--require-hashes', '-r', str(requirements)], check=True)
+selected, errors = wal.select_wal()
+if not selected: raise SystemExit('; '.join(errors))
+print('pywal16 instalado: ' + selected['version'] + ' em ' + selected['path'])

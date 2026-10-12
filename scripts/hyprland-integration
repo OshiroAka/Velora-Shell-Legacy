@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""Generate, verify and inspect the managed Hyprland integration."""
+import argparse
+import difflib
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import sys
+import tempfile
+sys.dont_write_bytecode = True
+
+ROOT = Path(__file__).resolve().parents[1]
+MODS = {'SHIFT': 1, 'CTRL': 4, 'CONTROL': 4, 'ALT': 8, 'SUPER': 64}
+PREFIX = 'Velora: '
+
+
+def call(command, **kwargs):
+    result = subprocess.run(command, text=True, capture_output=True, timeout=25, **kwargs)
+    if result.returncode or result.stdout.lstrip().startswith(('error:', 'unknown request')):
+        raise RuntimeError((result.stderr or result.stdout).strip())
+    return result.stdout
+
+
+def runtime_backend():
+    text = call(['hyprctl', 'systeminfo'])
+    match = re.search(r'^configProvider:\s*(\S+)', text, re.M)
+    if match and match[1] in ('lua', 'hyprlang', 'legacy'):
+        return 'lua' if match[1] == 'lua' else 'legacy'
+    # Old Hyprland versions only support hyprlang configuration.
+    version = json.loads(call(['hyprctl', '-j', 'version']))
+    if tuple(map(int, version.get('version', '0.0.0').split('.'))) < (0, 55, 0):
+        return 'legacy'
+    raise RuntimeError('Backend ativo do Hyprland não identificado; não presumir .conf.')
+
+
+def active_config(directory, backend):
+    instances = json.loads(call(['hyprctl', '-j', 'instances']))
+    signature = os.environ.get('HYPRLAND_INSTANCE_SIGNATURE')
+    instance = next((x for x in instances if x['instance'] == signature), None)
+    if instance:
+        arguments = Path(f"/proc/{instance['pid']}/cmdline").read_bytes().decode().split('\0')
+        for index, argument in enumerate(arguments):
+            if argument in ('-c', '--config') and index + 1 < len(arguments):
+                return Path(arguments[index + 1]).expanduser().resolve()
+            if argument.startswith('--config='):
+                return Path(argument.split('=', 1)[1]).expanduser().resolve()
+    return directory / ('hyprland.lua' if backend == 'lua' else 'hyprland.conf')
+
+
+def inventory(root=ROOT, infinite=True):
+    result = []
+    paths = [root / 'config/hyprland.conf.in']
+    if infinite: paths.append(root / 'scripts/infinite-desktop.conf')
+    for path in paths:
+        for line in path.read_text().splitlines():
+            match = re.fullmatch(r'bind([a-z]*)\s*=\s*([^,]*),\s*([^,]+),\s*exec,\s*(.+)', line)
+            if not match: continue
+            flags, mods, key, command = match.groups()
+            command = command.replace('"@ROOT@/scripts/', '"' + str(root / 'scripts') + '/')
+            if command.startswith('infinite-desktop '):
+                command = shlex.quote(str(root / 'scripts/infinite-desktop')) + command[len('infinite-desktop'):]
+            modifiers = mods.split()
+            result.append({'mods': ' '.join(modifiers), 'mask': sum(MODS[x] for x in modifiers),
+                           'key': key, 'flags': flags, 'command': command,
+                           'label': ' + '.join([*modifiers, key]),
+                           'source': str(path.relative_to(root))})
+    if len({(x['mask'], x['key'].lower()) for x in result}) != len(result):
+        raise RuntimeError('Binds oficiais duplicados no inventário.')
+    for bind in result:
+        executable = Path(shlex.split(bind['command'])[0])
+        if not executable.is_file() or not os.access(executable, os.X_OK):
+            raise RuntimeError('Comando de bind ausente/não executável: ' + str(executable))
+    return result
+
+
+def description(bind):
+    return PREFIX + bind['label'] + ' | ' + bind['command']
+
+
+def matches(actual, bind):
+    return (actual.get('modmask') == bind['mask'] and str(actual.get('key', '')).lower() == bind['key'].lower()
+            and actual.get('submap', '') == '')
+
+
+def conflicts(binds, registered):
+    return [{'label': bind['label'], 'existing': actual, 'replacement': bind['command']}
+            for bind in binds for actual in registered if matches(actual, bind)
+            and not actual.get('description', '').startswith(PREFIX)
+            and '/scripts/velora' not in actual.get('arg', '')
+            and '/scripts/infinite-desktop' not in actual.get('arg', '')]
+
+
+def check_registered(binds, registered, backend):
+    errors = []
+    for bind in binds:
+        found = [x for x in registered if matches(x, bind)]
+        expected = [x for x in found if x.get('description') == description(bind)]
+        if len(expected) != 1 or len(found) != 1:
+            errors.append(f"{bind['label']}: esperado 1 bind gerenciado, encontrados {len(expected)} gerenciados/{len(found)} totais")
+            continue
+        actual = expected[0]
+        if backend == 'legacy' and (actual.get('dispatcher') != 'exec' or actual.get('arg') != bind['command']):
+            errors.append(bind['label'] + ': comando diferente do inventário')
+        if bool(actual.get('repeat')) != ('e' in bind['flags']) or bool(actual.get('locked')) != ('l' in bind['flags']):
+            errors.append(bind['label'] + ': flags repeat/locked incorretas')
+    return errors
+
+
+def check_active(binds, backend):
+    errors = check_registered(binds, json.loads(call(['hyprctl', '-j', 'binds'])), backend)
+    if backend == 'lua' and not errors:
+        # Lua binds have opaque callback IDs in -j binds. Inspect the managed
+        # registry too, rather than treating a description as proof of command.
+        for bind in binds:
+            value = call(['hyprctl', 'repl', 'return velora_shell_managed.commands[' + lua_quote(bind['label']) + ']']).strip()
+            if value != bind['command']:
+                errors.append(bind['label'] + ': comando Lua registrado difere do inventário')
+    return errors
+
+
+def layer_specs(root=ROOT):
+    specs = {}
+    for line in (root / 'config/hyprland.conf.in').read_text().splitlines():
+        match = re.fullmatch(r'layerrule = (blur|blur_popups|ignore_alpha) ([^,]+), match:namespace (.+)', line)
+        if match:
+            name, value, namespace = match.groups()
+            specs.setdefault(namespace, {})[name] = value
+    return specs
+
+
+def lua_quote(value):
+    # Lua and JSON share these escapes; paths/commands cannot contain control bytes.
+    if any(ord(c) < 32 for c in value): raise RuntimeError('Caracteres de controle em caminho/comando.')
+    return json.dumps(value, ensure_ascii=False)
+
+
+def workspace_animation_lua(root=ROOT):
+    lines = []
+    for line in (root / 'config/hyprland.conf.in').read_text().splitlines():
+        curve = re.fullmatch(r'\s*bezier = (veloraWorkspace\w+), ([0-9.]+), ([0-9.]+), ([0-9.]+), ([0-9.]+)', line)
+        animation = re.fullmatch(r'\s*animation = (workspaces(?:In|Out)?), 1, ([0-9.]+), (veloraWorkspace\w+), (.+)', line)
+        if curve:
+            name, x0, y0, x1, y1 = curve.groups()
+            lines.append('hl.curve(' + lua_quote(name) + ', { type = "bezier", points = { {' + x0 + ', ' + y0 + '}, {' + x1 + ', ' + y1 + '} } })')
+        if animation:
+            leaf, speed, name, style = animation.groups()
+            lines.append('hl.animation({ leaf = ' + lua_quote(leaf) + ', enabled = true, speed = ' + speed
+                         + ', bezier = ' + lua_quote(name) + ', style = ' + lua_quote(style) + ' })')
+    return lines
+
+
+def generate_lua(binds, root=ROOT):
+    lines = ['-- Velora Shell: managed integration; generated from repository bind templates.',
+             '-- Personal source bindings remain intact; only the listed keys are taken over.',
+             'if velora_shell_managed then velora_shell_managed.remove() end',
+             'local managed = { binds = {}, rules = {}, commands = {} }',
+             'velora_shell_managed = managed',
+             'function managed.remove()',
+             '  for _, bind in ipairs(managed.binds) do bind:remove() end',
+             '  for _, rule in ipairs(managed.rules) do rule:set_enabled(false) end',
+             '  if managed.startup then managed.startup:remove() end',
+             '  velora_shell_managed = nil', 'end']
+    lines += workspace_animation_lua(root)
+    for index, (namespace, rules) in enumerate(layer_specs(root).items()):
+        properties = ', '.join(name + ' = ' + ('true' if value == 'on' else 'false' if value == 'off' else value) for name, value in rules.items())
+        lines.append('table.insert(managed.rules, hl.layer_rule({ name = "velora-surface-' + str(index) + '", match = { namespace = ' + lua_quote(namespace) + ' }, ' + properties + ' }))')
+    for bind in binds:
+        key = ' + '.join([*bind['mods'].split(), bind['key']])
+        options = 'description = ' + lua_quote(description(bind))
+        if 'e' in bind['flags']: options += ', repeating = true'
+        if 'l' in bind['flags']: options += ', locked = true'
+        lines += ['hl.unbind(' + lua_quote(key) + ')',
+                  'table.insert(managed.binds, hl.bind(' + lua_quote(key) + ', hl.dsp.exec_cmd(' + lua_quote(bind['command']) + '), { ' + options + ' }))',
+                  'managed.commands[' + lua_quote(bind['label']) + '] = ' + lua_quote(bind['command'])]
+    lines += ['managed.startup = hl.on("hyprland.start", function()',
+              '  hl.exec_cmd(' + lua_quote(shlex.quote(str(root / 'scripts/velora-wallpaper-apply')) + ' restore') + ')',
+              '  hl.exec_cmd(' + lua_quote(shlex.quote(str(root / 'scripts/velora')) + ' start') + ')', 'end)']
+    return '\n'.join(lines) + '\n'
+
+
+def generate_legacy(binds, release, root=ROOT):
+    import importlib.machinery
+    import importlib.util
+    loader = importlib.machinery.SourceFileLoader('native_rules', str(root / 'scripts/native-blur'))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    native = importlib.util.module_from_spec(spec); loader.exec_module(native)
+    template = (root / 'config/hyprland.conf.in').read_text()
+    lines = [line for line in template.splitlines() if not re.match(r'(bind[a-z]*|unbind)\s*=', line)]
+    template = native.layer_rules('\n'.join(lines) + '\n', release).replace('@ROOT@', str(root))
+    for bind in binds:
+        template += f"unbind = {bind['mods']}, {bind['key']}\n"
+        template += f"bind{bind['flags']}d = {bind['mods']}, {bind['key']}, {description(bind)}, exec, {bind['command']}\n"
+    return template
+
+
+def main_text(original, include, backend):
+    comment = '--' if backend == 'lua' else '#'
+    begin, end = comment + ' BEGIN VELORA MANAGED', comment + ' END VELORA MANAGED'
+    if backend == 'lua': line = 'dofile(' + lua_quote(str(include)) + ')'
+    else: line = 'source = ' + str(include)
+    block = begin + '\n' + line + '\n' + end
+    pattern = re.compile(r'^' + re.escape(begin) + r'\n.*?^' + re.escape(end) + r'\n?', re.M | re.S)
+    if pattern.search(original):
+        return pattern.sub(lambda _: block + '\n', original, count=1)
+    if backend == 'legacy':
+        # Consolidate the old installer's exact include, keeping all personal lines.
+        original = re.sub(r'^\s*source\s*=\s*' + re.escape(str(include)) + r'\s*\n?', '', original, flags=re.M)
+    return original + ('\n' if original and not original.endswith('\n') else '') + '\n' + block + '\n'
+
+
+def prepare(directory, *, infinite=True, backend=None, main=None, root=ROOT):
+    backend = backend or runtime_backend()
+    main = Path(main) if main else active_config(directory, backend)
+    if not main.is_file(): raise RuntimeError('Configuração principal não encontrada: ' + str(main))
+    original = main.read_text()
+    include = directory / ('velora-hyprland.lua' if backend == 'lua' else 'velora-hyprland.conf')
+    if include.exists() and not include.read_text().startswith(('-- Velora Shell:', '# Velora Shell:')):
+        raise RuntimeError('Arquivo de integração existente não é gerenciado: ' + str(include))
+    binds = inventory(root, infinite)
+    release = json.loads(call(['hyprctl', '-j', 'version'])).get('version', '')
+    snippet = generate_lua(binds, root) if backend == 'lua' else generate_legacy(binds, release, root)
+    proposed = main_text(original, include, backend)
+    return {'backend': backend, 'main': main, 'include': include, 'original': original,
+            'proposed': proposed, 'snippet': snippet, 'binds': binds,
+            'conflicts': conflicts(binds, json.loads(call(['hyprctl', '-j', 'binds'])))}
+
+
+def validate(snippet, backend):
+    with tempfile.TemporaryDirectory(prefix='velora-hypr-verify-') as directory:
+        base = Path(directory)
+        file = base / ('hyprland.lua' if backend == 'lua' else 'hyprland.conf')
+        file.write_text(snippet)
+        env = dict(os.environ, XDG_CACHE_HOME=str(base / 'cache'), XDG_CONFIG_HOME=str(base / 'config'),
+                   XDG_DATA_HOME=str(base / 'data'), XDG_STATE_HOME=str(base / 'state'), XDG_RUNTIME_DIR=str(base / 'runtime'))
+        Path(env['XDG_RUNTIME_DIR']).mkdir(mode=0o700)
+        # verify-config creates its own context; never reload the live compositor here.
+        output = call(['Hyprland', '--verify-config', '--config', str(file)], env=env, cwd=base)
+        if 'Config has errors' in output or 'config error' in output.lower(): raise RuntimeError(output)
+        return output
+
+
+def diff(plan):
+    before_include = plan['include'].read_text() if plan['include'].exists() else ''
+    return ''.join(difflib.unified_diff(plan['original'].splitlines(True), plan['proposed'].splitlines(True),
+                                      fromfile=str(plan['main']), tofile=str(plan['main']))) + ''.join(
+        difflib.unified_diff(before_include.splitlines(True), plan['snippet'].splitlines(True),
+                             fromfile=str(plan['include']), tofile=str(plan['include'])))
+
+
+def apply(plan):
+    if plan['main'].read_text() != plan['original']: raise RuntimeError('Configuração pessoal mudou desde a revisão; gere novo diff.')
+    saved = plan['include'].read_text() if plan['include'].exists() else None
+    # In-memory rollback also covers a failed reload/registration verification.
+    plan['include'].write_text(plan['snippet'])
+    plan['main'].write_text(plan['proposed'])
+    try:
+        call(['hyprctl', 'reload', 'config-only'])
+        errors = call(['hyprctl', 'configerrors']).strip()
+        errors = errors if errors not in ('', '[]') else ''
+        if errors: raise RuntimeError(errors)
+        problems = check_active(plan['binds'], plan['backend'])
+        if problems: raise RuntimeError('\n'.join(problems))
+    except Exception:
+        plan['main'].write_text(plan['original'])
+        if saved is None: plan['include'].unlink(missing_ok=True)
+        else: plan['include'].write_text(saved)
+        call(['hyprctl', 'reload', 'config-only'])
+        raise
+
+
+def main_cli():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('command', choices=['preview', 'status'])
+    parser.add_argument('--without-infinite-desktop', action='store_true')
+    args = parser.parse_args()
+    directory = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'hypr'
+    plan = prepare(directory, infinite=not args.without_infinite_desktop)
+    if args.command == 'preview':
+        validate(plan['snippet'], plan['backend'])
+        print(diff(plan))
+        print('CONFLICTS: ' + json.dumps(plan['conflicts'], ensure_ascii=False))
+    else:
+        errors = check_active(plan['binds'], plan['backend'])
+        print(json.dumps({'backend': plan['backend'], 'registered': not errors, 'expected': len(plan['binds']), 'errors': errors}, ensure_ascii=False))
+        return 1 if errors else 0
+    return 0
+
+
+if __name__ == '__main__':
+    try: raise SystemExit(main_cli())
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        raise SystemExit(str(error))

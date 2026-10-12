@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-export PATH="${XDG_DATA_HOME:-$HOME/.local/share}/velora-shell/runtime/quickshell/bin:$project_dir/scripts:$PATH"
+qs_executable=$(python3 "$project_dir/scripts/preflight" --quickshell)
+export PATH="$(dirname "$qs_executable"):$project_dir/scripts:$PATH"
+python3 "$project_dir/scripts/preflight" --runtime >/dev/null
 export VELORA_HOST_XDG_CONFIG_HOME="${VELORA_HOST_XDG_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}}"
 "$project_dir/scripts/init-config"
 sound_file="${XDG_CONFIG_HOME:-$HOME/.config}/velora-shell/notification-sound"
@@ -15,4 +18,6 @@ build_dir=$("$project_dir/scripts/build")
 export QML_IMPORT_PATH="$build_dir/visualizer/qml:$build_dir/spectrum/qml${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}"
 export QS_NO_RELOAD_POPUP=1
 export QSG_RENDER_LOOP=threaded
-exec qs -p "$project_dir" "$@"
+python3 "$project_dir/scripts/velora-notifications" claim || \
+    printf '%s\n' 'Velora: conflito de notificações preservado; consulte scripts/velora-notifications status.' >&2
+exec "$qs_executable" -p "$project_dir" "$@"

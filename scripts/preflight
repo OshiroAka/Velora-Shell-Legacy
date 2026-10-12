@@ -1,0 +1,228 @@
+#!/usr/bin/env python3
+"""Inspect startup/build requirements without installing packages or touching configuration."""
+import argparse
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+
+sys.dont_write_bytecode = True
+loader = importlib.machinery.SourceFileLoader('velora_wal', str(Path(__file__).with_name('velora-wal')))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+wal = importlib.util.module_from_spec(spec); loader.exec_module(wal)
+loader = importlib.machinery.SourceFileLoader('velora_browser', str(Path(__file__).with_name('velora-browser')))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+browser = importlib.util.module_from_spec(spec); loader.exec_module(browser)
+loader = importlib.machinery.SourceFileLoader('velora_bluetooth', str(Path(__file__).with_name('velora-bluetooth-setup')))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+bluetooth = importlib.util.module_from_spec(spec); loader.exec_module(bluetooth)
+ZEN_PACKAGES = ('gtk3', 'libxt', 'mime-types', 'dbus-glib', 'nss', 'ffmpeg', 'ttf-font')
+
+COMMANDS = {'bash': 'bash', 'python3': 'python', 'cmake': 'cmake', 'make': 'make',
+            'pkg-config': 'pkgconf', 'rg': 'ripgrep', 'jq': 'jq', 'hyprctl': 'hyprland',
+            'readlink': 'coreutils', 'sha256sum': 'coreutils', 'cut': 'coreutils',
+            'df': 'coreutils', 'flock': 'util-linux', 'systemctl': 'systemd',
+            'nmcli': 'networkmanager', 'wpctl': 'wireplumber', 'brightnessctl': 'brightnessctl',
+            'grim': 'grim', 'slurp': 'slurp', 'wl-copy': 'wl-clipboard',
+            'notify-send': 'libnotify', 'busctl': 'systemd', 'magick': 'imagemagick',
+            'zenity': 'zenity'}
+MODULES = {'Qt6Core': 'qt6-base', 'Qt6Gui': 'qt6-base', 'Qt6Qml': 'qt6-declarative',
+           'Qt6Quick': 'qt6-declarative', 'Qt6QuickControls2': 'qt6-declarative',
+           'Qt6Multimedia': 'qt6-multimedia', 'Qt6ShaderTools': 'qt6-shadertools',
+           'Qt6Core5Compat': 'qt6-5compat', 'Qt6WaylandClient': 'qt6-wayland',
+           'Qt6Svg': 'qt6-svg', 'libpulse-simple': 'libpulse', 'fftw3f': 'fftw'}
+OPTIONAL = {'playerctl': 'playerctl', 'bluetoothctl': 'bluez-utils', 'powerprofilesctl': 'power-profiles-daemon',
+            'xdg-open': 'xdg-utils', 'notify-send': 'libnotify', 'ffmpeg': 'ffmpeg',
+            'magick': 'imagemagick'}
+IMPORT_PROBE = '''import QtQuick
+import QtQuick.Controls
+import QtQuick.Dialogs
+import QtQuick.Shapes
+import QtMultimedia
+import Qt5Compat.GraphicalEffects
+import Quickshell
+import Quickshell.Wayland
+import Quickshell.Hyprland
+import Quickshell.Networking
+import Quickshell.Bluetooth
+import Quickshell.Services.Pipewire
+import Quickshell.Services.Mpris
+import Quickshell.Services.UPower
+ShellRoot {
+    Component.onCompleted: console.info("VELORA_IMPORTS_READY")
+    Timer { interval: 1; running: true; onTriggered: Qt.quit() }
+}
+'''
+
+
+def run(command, **kwargs):
+    return subprocess.run(command, capture_output=True, text=True, timeout=40, **kwargs)
+
+
+def version(text):
+    match = re.search(r'(\d+)\.(\d+)\.(\d+)', text)
+    return tuple(map(int, match.groups())) if match else (0, 0, 0)
+
+
+def quickshell_candidates():
+    # A working distribution package wins over a historical private build.
+    system = shutil.which('qs')
+    private = Path(os.environ.get('XDG_DATA_HOME') or Path.home() / '.local/share') / 'velora-shell/runtime/quickshell/bin/qs'
+    return list(dict.fromkeys([p for p in (system, str(private) if private.is_file() else None) if p]))
+
+
+def select_quickshell(probe=True):
+    errors = []
+    for executable in quickshell_candidates():
+        try:
+            result = run([executable, '--version'])
+            label = (result.stdout + result.stderr).strip()
+            if result.returncode or version(label) < (0, 3, 0):
+                raise RuntimeError(label or 'qs >= 0.3.0 necessário')
+            if probe:
+                with tempfile.TemporaryDirectory(prefix='velora-qs-probe-') as directory:
+                    base = Path(directory)
+                    (base / 'shell.qml').write_text(IMPORT_PROBE)
+                    runtime = base / 'runtime'
+                    runtime.mkdir(mode=0o700)
+                    env = dict(os.environ, QT_QPA_PLATFORM='offscreen', XDG_RUNTIME_DIR=str(runtime),
+                               XDG_CONFIG_HOME=str(base / 'config'), XDG_DATA_HOME=str(base / 'data'),
+                               XDG_CACHE_HOME=str(base / 'cache'), VELORA_VALIDATE='1')
+                    for key in ('WAYLAND_DISPLAY', 'HYPRLAND_INSTANCE_SIGNATURE', 'QML_IMPORT_PATH', 'QML2_IMPORT_PATH'):
+                        env.pop(key, None)
+                    try:
+                        result = subprocess.run(
+                            [executable, '-p', str(base)],
+                            env=env, capture_output=True, text=True, timeout=8
+                        )
+                        output = result.stdout + result.stderr
+                        if result.returncode:
+                            raise RuntimeError(output[-2500:] or "Quickshell encerrou com erro.")
+                    except subprocess.TimeoutExpired as error:
+                        def as_text(value):
+                            return value.decode("utf-8", "replace") if isinstance(value, bytes) else (value or "")
+                        output = as_text(error.stdout) + as_text(error.stderr)
+                    if "VELORA_IMPORTS_READY" not in output or "ERROR" in output or "unresolvable import" in output.lower():
+                        raise RuntimeError(output[-2500:] or "Imports QML não confirmados em 8 segundos.")
+            return {'path': executable, 'version': label, 'importsVerified': probe}, errors
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            errors.append(f'{executable}: {error}')
+    return {}, errors or ['qs não encontrado; pacote Arch: quickshell']
+
+
+def path_present(directory, path=None):
+    return directory.resolve() in [Path(p).expanduser().resolve() for p in (path if path is not None else os.environ.get('PATH', '')).split(os.pathsep) if p]
+
+
+def inspect(build=True):
+    missing, packages, pending = [], set(), []
+    commands = COMMANDS if build else {k: v for k, v in COMMANDS.items() if k not in ('cmake', 'make', 'pkg-config')}
+    commands = dict(commands)
+    if bluetooth.hardware_present():
+        commands.update({'bluetoothctl': 'bluez-utils', 'blueman-manager': 'blueman',
+                         '/usr/lib/bluetooth/bluetoothd': 'bluez', 'rfkill': 'util-linux'})
+    for command, package in commands.items():
+        if not shutil.which(command):
+            missing.append(command)
+            packages.add(package)
+    qt = ''
+    if build and shutil.which('pkg-config'):
+        for module, package in MODULES.items():
+            result = run(['pkg-config', '--modversion', module])
+            if result.returncode:
+                missing.append(module)
+                packages.add(package)
+            elif module == 'Qt6Core':
+                qt = result.stdout.strip()
+                if version(qt) < (6, 8, 0):
+                    missing.append('Qt >= 6.8 necessário: ' + qt)
+                    packages.update(p for p in MODULES.values() if p.startswith('qt6-'))
+        if run(['pkg-config', '--exists', 'hyprland']).returncode:
+            pending.append('Headers Hyprland ausentes (Arch: hyprland); plugin nativo opcional')
+    elif build:
+        missing.extend(MODULES)
+        packages.update(MODULES.values())
+    compiler = shlex.split(os.environ.get('CXX', 'c++'))
+    if build:
+        if not compiler or not shutil.which(compiler[0]):
+            missing.append('Compilador C++23')
+            packages.add('gcc')
+        else:
+            with tempfile.TemporaryDirectory(prefix='velora-cxx-') as temporary:
+                result = run(compiler + ['-std=c++23', '-x', 'c++', '-', '-o', temporary + '/probe'],
+                             input='#include <format>\nint main(){auto s=std::format("{}", 1);}\n')
+                if result.returncode:
+                    missing.append('Compilador C++23 com std::format: ' + result.stderr[-600:])
+                    packages.add('gcc')
+    quickshell, errors = select_quickshell()
+    if not quickshell:
+        missing.extend(errors)
+        packages.add('quickshell')
+    for command, package in OPTIONAL.items():
+        if not shutil.which(command): pending.append(f'{command} ({package})')
+    backends = [('awww', 'awww-daemon'), ('swww', 'swww-daemon')]
+    if not any(shutil.which(client) and shutil.which(daemon) for client, daemon in backends):
+        missing.append('Backend de wallpaper awww/swww com daemon correspondente')
+        packages.add('awww')
+    if run([sys.executable, '-c', 'from PIL import Image']).returncode:
+        missing.append('Pillow (extração e análise da paleta)')
+        packages.add('python-pillow')
+    pywal, errors = wal.select_wal()
+    if not pywal: missing.append('; '.join(errors))
+    sources = [] if pywal else ['pywal16']
+    zen, errors = browser.select_browser()
+    if build and not zen:
+        missing.append('; '.join(errors))
+        sources.append('zen-browser')
+        if shutil.which('pacman'):
+            absent = run(['pacman', '-T', *ZEN_PACKAGES]).stdout.splitlines()
+            packages.update(p for p in absent if p in ZEN_PACKAGES)
+        else:
+            packages.update(ZEN_PACKAGES)
+    elif not zen:
+        pending.append('Zen Browser: SUPER+F pendente; execute ./install.sh')
+    return {'ready': not missing, 'missing': missing, 'packages': sorted(packages),
+            'sourceFeatures': sources, 'pywal': pywal, 'zen': zen,
+            'optionalPending': pending, 'qt': qt, 'quickshell': quickshell,
+            'pathReady': path_present(Path.home() / '.local/bin')}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--json', action='store_true')
+    parser.add_argument('--runtime', action='store_true')
+    parser.add_argument('--quickshell', action='store_true', help='Print a compatible executable path')
+    args = parser.parse_args()
+    if args.quickshell:
+        value, errors = select_quickshell()
+        if not value:
+            print('\n'.join(errors), file=sys.stderr)
+            return 1
+        print(value['path'])
+        return 0
+    value = inspect(build=not args.runtime)
+    if args.json: print(json.dumps(value))
+    else:
+        print('PREFLIGHT: ' + ('PASS' if value['ready'] else 'BLOCKED_MISSING_DEPENDENCIES'))
+        for item in value['missing']: print('Obrigatório ausente/incompatível: ' + item)
+        if value['packages']: print('Arch: sudo pacman -S --needed ' + ' '.join(value['packages']))
+        if 'pywal16' in value['sourceFeatures']: print('PyPI isolado: ./scripts/build-pywal (ou ./install.sh --install-pywal)')
+        if 'zen-browser' in value['sourceFeatures']: print('Zen oficial: ./install.sh --install-zen (binário verificado, diretório do usuário)')
+        print('Quickshell: ' + str(value['quickshell']))
+        for item in value['optionalPending']: print('Opcional pendente: ' + item)
+        if not value['pathReady']: print('PATH: ~/.local/bin ausente; use ./scripts/velora ou adicione à sessão atual.')
+    return 0 if value['ready'] else 1
+
+
+if __name__ == '__main__':
+    try: raise SystemExit(main())
+    except (OSError, subprocess.SubprocessError) as error:
+        print('PREFLIGHT: BLOCKED_MISSING_DEPENDENCIES: ' + str(error), file=sys.stderr)
+        raise SystemExit(1)

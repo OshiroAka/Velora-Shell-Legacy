@@ -49,16 +49,9 @@ zen_is_running() {
 
 start_zen() {
   local zen_cmd=""
-
-  if command -v zen-browser >/dev/null 2>&1; then
-    zen_cmd="$(command -v zen-browser)"
-  elif command -v zen >/dev/null 2>&1; then
-    zen_cmd="$(command -v zen)"
-  elif [ -x /usr/bin/zen-browser ]; then
-    zen_cmd="/usr/bin/zen-browser"
-  elif [ -x /opt/zen-browser-bin/zen-bin ]; then
-    zen_cmd="/opt/zen-browser-bin/zen-bin"
-  else
+  local zen_project_dir
+  zen_project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+  if ! zen_cmd=$("$zen_project_dir/scripts/velora-browser" --resolve); then
     printf '[%s] Zen binary not found\n' "$(date --iso-8601=seconds)"
     return 127
   fi

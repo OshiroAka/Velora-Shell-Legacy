@@ -1,6 +1,10 @@
 import importlib.machinery
 import importlib.util
+import json
+import os
 import random
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -47,6 +51,38 @@ class PaletteSurfaceTests(unittest.TestCase):
                 for tone in ('light', 'dark'):
                     doc = surfaces.build(self.palette(), path, tone)
                     self.assertGreaterEqual(surfaces.contrast(surfaces.rgb(doc['special']['background']), surfaces.rgb(doc['special']['foreground'])), 4.5)
+
+    def test_real_generator_changes_palette_without_external_theme_writes(self):
+        loader = importlib.machinery.SourceFileLoader('wal_fixture', str(ROOT / 'scripts/velora-wal'))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        wal = importlib.util.module_from_spec(spec); loader.exec_module(wal)
+        selected, _ = wal.select_wal()
+        if not selected or not shutil.which('magick') or not shutil.which('jq'):
+            self.skipTest('pywal16/ImageMagick/jq unavailable')
+        with tempfile.TemporaryDirectory(prefix='velora-palette-validation-') as directory:
+            home = Path(directory)
+            (home / 'bin').mkdir()
+            # Expose only wal: adding a venv's entire bin would also shadow
+            # system Python, which provides Pillow for Velora's image helpers.
+            (home / 'bin/wal').symlink_to(selected['path'])
+            env = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(home / 'config'),
+                       XDG_DATA_HOME=str(home / 'data'), XDG_CACHE_HOME=str(home / 'cache'),
+                       XDG_STATE_HOME=str(home / 'state'), PATH=str(home / 'bin') + os.pathsep + os.environ['PATH'])
+            palettes = []
+            for name, channels in [('red', (1, .25, .1)), ('blue', (.1, .3, 1))]:
+                image = Image.new('RGB', (128, 128))
+                image.putdata([tuple(int((40 + 180 * (x+y) / 254) * v) for v in channels)
+                               for y in range(128) for x in range(128)])
+                path = home / (name + '.png'); image.save(path)
+                result = subprocess.run([str(ROOT / 'scripts/generate-pywal-palette'), str(path), 'dark'],
+                                        env=env, capture_output=True, text=True, timeout=40)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data = json.loads((home / 'cache/velora-shell/pywal/colors.json').read_text())
+                self.assertEqual(data['wallpaper'], str(path))
+                self.assertGreaterEqual(len(data['colors']), 16)
+                palettes.append(data['colors'])
+            self.assertNotEqual(*palettes)
+            self.assertFalse((home / 'config').exists())
 
 
 if __name__ == '__main__':

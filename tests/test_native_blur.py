@@ -122,7 +122,8 @@ class NativeBlurTests(unittest.TestCase):
                 self.assertEqual(m.inspect()["state"], "absent")
             for native, ready in [({"active": True}, False), ({"active": True, "abi": "other"}, False),
                                   ({"active": False, "abi": "abi"}, False),
-                                  ({"active": True, "abi": "abi", "capabilities": ["bar-blur"]}, True)]:
+                                  ({"active": True, "abi": "abi", "capabilities": ["bar-blur"]}, False),
+                                  ({"active": True, "abi": "abi", "capabilities": m.CAPABILITIES}, True)]:
                 with patch.object(m, "run", side_effect=[json.dumps([{"name": "velora-blur"}]), json.dumps(native)]):
                     self.assertEqual(m.inspect()["available"], ready)
             with patch.object(m, "run", side_effect=subprocess.TimeoutExpired("hyprctl", 10)):
@@ -186,8 +187,8 @@ class NativeBlurTests(unittest.TestCase):
         text = (ROOT / "config/hyprland.conf.in").read_text()
         self.assertEqual(m.layer_rules(text, "0.56.2"), text)
         legacy = m.layer_rules(text, "0.52.0")
-        self.assertIn("layerrule = blur, ^velora-shell($|-.*)", legacy)
-        self.assertIn("layerrule = blurpopups, ^velora-shell($|-.*)", legacy)
+        self.assertIn("layerrule = blur, ^velora-shell-(topbar|unified-bar|", legacy)
+        self.assertIn("layerrule = blurpopups, ^velora-shell-(topbar|unified-bar|", legacy)
         self.assertIn("layerrule = ignorealpha 0.02,", legacy)
         self.assertNotIn("match:namespace", legacy)
         self.assertNotIn("layerrule = noblur", legacy)

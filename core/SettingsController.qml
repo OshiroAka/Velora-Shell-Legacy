@@ -65,6 +65,7 @@ Scope {
     property int pendingTarget: 0
     property string pendingImagePath: ""
     property string profileAvatarError: ""
+    property string pickerError: ""
     property bool avatarProfileSavePending: false
     property string pendingKind: "image"
     property string pendingProfileId: ""
@@ -224,27 +225,11 @@ Scope {
         if (picking || imagePicker.running)
             return false
         pendingTarget = Math.max(0, Math.min(3, Number(target)))
-        pendingKind = "image"
-        pendingImagePath = ""
-        picking = true
-        shown = false
-        serial += 1
-        root.preview.hide()
-        pickerDelay.restart()
-        return true
+        return beginPicker("image")
     }
 
     function chooseWallpaper() {
-        if (picking || imagePicker.running)
-            return false
-        pendingKind = "wallpaper"
-        pendingImagePath = ""
-        picking = true
-        shown = false
-        serial += 1
-        root.preview.hide()
-        pickerDelay.restart()
-        return true
+        return beginPicker("wallpaper")
     }
 
     function beginPicker(kind) {
@@ -252,6 +237,8 @@ Scope {
             return false
         pendingKind = String(kind)
         pendingImagePath = ""
+        pickerError = ""
+        closeTimer.stop()
         picking = true
         shown = false
         serial += 1
@@ -336,7 +323,10 @@ Scope {
     }
 
     function pickerCommand() {
-        const command = ["zenity", "--file-selection"]
+        // The shell always exits, including when zenity is missing. A direct
+        // Process launch failure does not emit exited in Quickshell 0.3.
+        const command = ["/bin/sh", "-c", 'exec "$@"', "velora-image-picker",
+            "zenity", "--file-selection"]
         if (pendingKind === "packageExport")
             command.push("--save", "--confirm-overwrite")
         if (pendingKind === "photoGrid")
@@ -357,7 +347,7 @@ Scope {
                     ? "--filename=" + config.homeDir + "/Downloads/"
                     : (pendingKind === "font"
                         ? "--filename=" + config.homeDir + "/.local/share/fonts/"
-                        : "--filename=" + config.homeDir + "/Templates de imagens/"))))
+                        : "--filename=" + config.homeDir + "/Pictures/"))))
         command.push(pendingKind === "wallpaper"
             ? "--file-filter=Wallpapers | *.png *.jpg *.jpeg *.webp *.gif *.mp4 *.webm *.mkv *.mov"
             : (pendingKind === "packageImport" || pendingKind === "packageExport"
@@ -375,6 +365,13 @@ Scope {
     }
 
     function restoreAfterPicker(exitCode) {
+        pickerStartup.stop()
+        if (exitCode !== 0 && exitCode !== 1) {
+            pickerError = exitCode === 127
+                ? "Seletor de arquivos ausente. Execute o instalador para instalar zenity."
+                : "Não foi possível abrir o seletor de arquivos. Tente novamente."
+            console.warn("Velora image picker failed:", exitCode, pickerErrors.text.trim())
+        }
         if (exitCode === 0 && pendingImagePath.length > 0) {
             const selectedUrl = encodeURI("file://" + pendingImagePath)
             if (pendingKind === "wallpaper")
@@ -395,7 +392,7 @@ Scope {
                     "fontAsset", selectedUrl)
             }
             else if (pendingKind === "avatar" || pendingKind === "barAvatar") {
-                avatarImport.command = ["python3",
+                avatarImport.command = ["/bin/sh", "-c", 'exec "$@"', "velora-avatar-import", "python3",
                     Quickshell.shellDir + "/scripts/import-bar-avatar",
                     pendingImagePath]
                 avatarImport.running = true
@@ -436,7 +433,8 @@ Scope {
             dirty: sessionDirty,
             closePrompt: closePrompt,
             lifecycle: picking ? "picking" : (!mounted ? "unloaded"
-                : (shown ? "active" : "closing"))
+                : (shown ? "active" : "closing")),
+            pickerError: pickerError
         }
     }
 
@@ -454,7 +452,22 @@ Scope {
         id: pickerDelay
         interval: root.motion.exit + 110
         repeat: false
-        onTriggered: imagePicker.running = true
+        onTriggered: {
+            imagePicker.startedSuccessfully = false
+            pickerStartup.restart()
+            imagePicker.running = true
+        }
+    }
+
+    Timer {
+        id: pickerStartup
+        interval: 2000
+        onTriggered: {
+            if (root.picking && !imagePicker.startedSuccessfully) {
+                root.pickerError = "Não foi possível iniciar o seletor de arquivos."
+                root.restoreAfterPicker(126)
+            }
+        }
     }
 
     Timer {
@@ -468,10 +481,13 @@ Scope {
         id: imagePicker
         command: root.pickerCommand()
         running: false
+        property bool startedSuccessfully: false
+        onStarted: { startedSuccessfully = true; pickerStartup.stop() }
 
         stdout: SplitParser {
             onRead: function(line) { root.pendingImagePath = String(line).trim() }
         }
+        stderr: StdioCollector { id: pickerErrors }
 
         onExited: function(exitCode) { root.restoreAfterPicker(exitCode) }
     }
@@ -536,6 +552,7 @@ Scope {
         interval: root.mode === "settings" ? root.motion.contentExit + root.motion.closeDuration + 30 : root.motion.exit + 80
         repeat: false
         onTriggered: {
+            if (root.picking) return
             root.mounted = false
             root.shown = false
             root.serial += 1

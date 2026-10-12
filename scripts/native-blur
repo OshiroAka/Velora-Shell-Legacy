@@ -14,7 +14,7 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-CAPABILITIES = ["desktop-bar-material", "transition", "dial", "caustics", "topbar-connected", "bar-blur",
+CAPABILITIES = ["alpha-mask", "desktop-bar-material", "transition", "dial", "caustics", "topbar-connected", "bar-blur",
                 "widget-blur", "liquid-style", "wallpaper", "topbar-shape",
                 "unified-bar-shape", "topbar-settle", "right-menu-shape",
                 "settings-shape", "settings-connected", "editor-shape", "selector-shape", "appearance",
@@ -187,7 +187,8 @@ def build_locked(directory, jobs):
 
 def inspect():
     result = {"available": False, "loaded": False, "capabilities": [], "state": "unavailable",
-              "diagnostic": "", "running": {}}
+              "diagnostic": "", "running": {}, "compatible": False, "active": False,
+              "renderingCorrect": None}
     try:
         result["running"] = running_version()
         plugins = json.loads(run(["hyprctl", "-j", "plugin", "list"]))
@@ -204,6 +205,11 @@ def inspect():
         result["native"] = status
         if not status.get("active") or status.get("abi") != (result["running"].get("abiHash") or result["running"].get("commit")):
             result.update(state="unverified", diagnostic="Plugin sem confirmação de ABI/capacidades; reconstrua e carregue com scripts/load-native-blur.")
+            return result
+        result["compatible"] = True
+        result["active"] = True
+        if not set(CAPABILITIES).issubset(status.get("capabilities", [])):
+            result.update(state="unverified", diagnostic="Plugin sem capacidades de composição/máscara exigidas; reconstrua.")
             return result
         result.update(available=True, state="ready", capabilities=status.get("capabilities", []))
     except (OSError, RuntimeError, ValueError, AttributeError, TypeError, subprocess.SubprocessError) as error:

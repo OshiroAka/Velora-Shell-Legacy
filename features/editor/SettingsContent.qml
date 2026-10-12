@@ -49,7 +49,7 @@ Item {
     })
     readonly property var legacyTheme: controller.shell ? controller.shell.unifiedTheme : null
     readonly property var wallpaper: controller.wallpaperService || null
-    implicitHeight: pageLoader.item ? pageLoader.item.implicitHeight : 0
+    implicitHeight: pageLoader.y + (pageLoader.item ? pageLoader.item.implicitHeight : 0)
     function setHyprlandBlur(enabled) { if (integrations) integrations.setHyprlandBlur(enabled) }
 
     function prepareResult(result) {
@@ -251,12 +251,24 @@ Item {
         } else shell.openQuickPopup(kind)
         controller.hide()
     }
+    Text {
+        id: pickerErrorLabel
+        width: parent.width
+        visible: root.controller.pickerError.length > 0
+        text: root.controller.pickerError
+        color: root.theme.danger
+        font.pixelSize: 12
+        wrapMode: Text.WordWrap
+    }
     Loader {
         id: pageLoader
+        readonly property real restingY: pickerErrorLabel.visible ? pickerErrorLabel.height + 12 : 0
+        y: restingY
+        onRestingYChanged: if (!sectionEntrance.running) y = restingY
         width: parent.width
         onLoaded: {
             sectionEntrance.stop()
-            opacity = 1; y = 0
+            opacity = 1; y = restingY
             if (root.motion && !root.motion.reduced) sectionEntrance.restart()
         }
         sourceComponent: root.page === "appearance" ? appearancePage
@@ -270,15 +282,15 @@ Item {
     }
     SequentialAnimation {
         id: sectionEntrance
-        ScriptAction { script: { pageLoader.opacity=0; pageLoader.y=8 } }
+        ScriptAction { script: { pageLoader.opacity=0; pageLoader.y=pageLoader.restingY+8 } }
         PauseAnimation { duration: root.motion ? root.motion.geometryDuration : 0 }
         ParallelAnimation {
             NumberAnimation { target: pageLoader; property: "opacity"; to: 1; duration: root.motion ? root.motion.contentDuration : 0 }
-            NumberAnimation { target: pageLoader; property: "y"; to: 0; duration: root.motion ? root.motion.contentDuration : 0; easing.type: Easing.OutCubic }
+            NumberAnimation { target: pageLoader; property: "y"; to: pageLoader.restingY; duration: root.motion ? root.motion.contentDuration : 0; easing.type: Easing.OutCubic }
         }
     }
     Connections { target: root.motion
-        function onReducedChanged() { if(root.motion.reduced) { sectionEntrance.stop(); pageLoader.opacity=1; pageLoader.y=0 } }
+        function onReducedChanged() { if(root.motion.reduced) { sectionEntrance.stop(); pageLoader.opacity=1; pageLoader.y=pageLoader.restingY } }
     }
     Component { id: sidebarPage; LegacyControls { category: "bar" } }
     Component { id: appearancePage

@@ -71,6 +71,7 @@ Item {
     readonly property color borderSoft: theme ? (pywalStyle ? theme.withAlpha(theme.sidebarBorderGlow, Math.min(0.18, Math.max(0.08, theme.sidebarBorderGlow.a * 0.50))) : theme.withAlpha(theme.borderSoft, theme.themeMode === "dark" ? 0.11 : 0.26)) : Qt.rgba(1, 1, 1, 0.26)
     readonly property string uiFont: theme ? theme.uiFont : "Noto Sans CJK JP"
     readonly property string monoFont: theme ? theme.monoFont : "JetBrainsMono Nerd Font"
+    FontLoader { id: clockEditorialFont; source: "../assets/fonts/LiberationSerif-Regular.ttf" }
     readonly property int motionFast: theme ? theme.motionFast : 120
     readonly property int motionNormal: theme ? theme.motionNormal : 200
     readonly property int motionHover: theme ? theme.motionHover : 120
@@ -1011,11 +1012,6 @@ Item {
             visible: false
         }
 
-        SectionLabel {
-            Layout.fillWidth: true
-            text: root.tr("apps")
-        }
-
         ColumnLayout {
             Layout.alignment: Qt.AlignHCenter
             Layout.topMargin: Math.round(9 * root.uiScale)
@@ -1051,11 +1047,6 @@ Item {
             Layout.fillWidth: true
             Layout.topMargin: Math.round(15 * root.uiScale) + root.stretchGap
             Layout.bottomMargin: Math.round(12 * root.uiScale)
-        }
-
-        SectionLabel {
-            Layout.fillWidth: true
-            text: root.tr("utilities")
         }
 
         ColumnLayout {
@@ -1357,12 +1348,12 @@ Item {
                 color: root.ink
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
-                font.family: root.monoFont
+                font.family: clockEditorialFont.name || "serif"
                 font.pixelSize: Math.min(Math.round(27 * root.uiScale), Math.round(27 * root.uiScale * root.compactScale))
-                font.weight: Font.Medium
+                font.weight: Font.Thin
                 rotation: -90
                 transformOrigin: Item.Center
-                layer.enabled: root.fontGlowEnabled()
+                layer.enabled: false
                 layer.effect: FontGlowEffect {}
             }
 

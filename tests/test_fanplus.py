@@ -57,12 +57,14 @@ class FanPlusTests(unittest.TestCase):
             with mock.patch.object(Path, "is_file", return_value=False):
                 self.assertIn("ec_probe", provider.availability()[1])
             with mock.patch("shutil.which", return_value="/usr/bin/test"), \
+                 mock.patch.object(Path, "is_file", return_value=True), \
                  mock.patch.object(Path, "exists", return_value=False), \
                  mock.patch("subprocess.run", return_value=subprocess.CompletedProcess([], 1)):
                 self.assertIn("acpi_call", provider.availability()[1])
             (self.root / "helper").write_text("")
             (self.root / "policy").write_text("")
-            with mock.patch("shutil.which", return_value="/usr/bin/test"):
+            with mock.patch("shutil.which", return_value="/usr/bin/test"), \
+                 mock.patch.object(Path, "is_file", return_value=True):
                 self.assertTrue(provider.availability()[0])
 
     def run_privileged(self, action, responses):

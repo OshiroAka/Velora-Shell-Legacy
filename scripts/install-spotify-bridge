@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""Review/install the existing Velora extension and its loopback helper."""
+import argparse
+import configparser
+import difflib
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+sys.dont_write_bytecode = True
+ROOT = Path(__file__).resolve().parents[1]
+EXTENSION = 'velora-spotify-bridge.js'
+
+
+def executable():
+    found = shutil.which('spicetify')
+    private = Path.home() / '.spicetify/spicetify'
+    return found or (str(private) if private.is_file() else None)
+
+
+def preference():
+    return Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'velora-shell/spotify-bridge'
+
+
+def configured():
+    return preference().is_file() and preference().read_text().strip() == 'enabled'
+
+
+def configuration(text):
+    # Preserve comments, formatting, custom apps, theme and personal extensions.
+    parser = configparser.RawConfigParser(); parser.read_string(text)
+    extensions = [x.strip() for x in parser.get('AdditionalOptions', 'extensions', fallback='').split('|') if x.strip()]
+    extensions = list(dict.fromkeys([*extensions, EXTENSION]))
+    section = re.search(r'^\[AdditionalOptions\]\s*\n(.*?)(?=^\[|\Z)', text, re.M | re.S)
+    if not section: raise RuntimeError('Seção AdditionalOptions ausente no Spicetify; arquivo preservado.')
+    body = section[1]
+    if re.search(r'^extensions\s*=', body, re.M):
+        body = re.sub(r'^(extensions[ \t]*=[ \t]*)[^\n]*', lambda m: m[1] + '|'.join(extensions), body, count=1, flags=re.M)
+    else: body = 'extensions = ' + '|'.join(extensions) + '\n' + body
+    return text[:section.start(1)] + body + text[section.end(1):]
+
+
+def unit_text():
+    def quote(value): return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%') + '"'
+    return ('# Velora Shell managed Spotify bridge\n[Unit]\nDescription=Velora Spotify loopback bridge\n'
+            '[Service]\nExecStart=' + quote(sys.executable) + ' ' + quote(ROOT / 'scripts/velora-spotify-bridge')
+            + '\nRestart=on-failure\nRestartSec=3\n[Install]\nWantedBy=default.target\n')
+
+
+def plan():
+    cli = executable()
+    if not cli: raise RuntimeError('Spicetify não encontrado; a integração é opcional.')
+    config = Path(subprocess.check_output([cli, '-c'], text=True, timeout=10).strip())
+    original = config.read_text()
+    extension = config.parent / 'Extensions' / EXTENSION
+    unit = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'systemd/user/velora-spotify-bridge.service'
+    if unit.exists() and not unit.read_text().startswith('# Velora Shell managed Spotify bridge'):
+        raise RuntimeError('Serviço pessoal existente preservado: ' + str(unit))
+    return dict(cli=cli, config=config, original=original, proposed=configuration(original),
+                extension=extension, unit=unit, unit_text=unit_text())
+
+
+def review(value):
+    for path, old, new in [(value['config'], value['original'], value['proposed']),
+                           (value['unit'], value['unit'].read_text() if value['unit'].exists() else '', value['unit_text'])]:
+        print(''.join(difflib.unified_diff(old.splitlines(True), new.splitlines(True), fromfile=str(path), tofile=str(path))))
+    print('Extensão: ' + str(ROOT / 'integrations/spotify' / EXTENSION) + ' → ' + str(value['extension']))
+    print('Helper: serviço do usuário em 127.0.0.1:8765; sem exportar credenciais Spotify.')
+
+
+def apply(value):
+    if value['config'].read_text() != value['original']: raise RuntimeError('Configuração Spicetify mudou; revise novamente.')
+    source = ROOT / 'integrations/spotify' / EXTENSION
+    saved = value['extension'].read_bytes() if value['extension'].exists() else None
+    value['extension'].parent.mkdir(parents=True, exist_ok=True)
+    value['extension'].write_bytes(source.read_bytes())
+    value['config'].write_text(value['proposed'])
+    try:
+        subprocess.run([value['cli'], '-n', 'apply'], check=True)
+    except Exception:
+        value['config'].write_text(value['original'])
+        if saved is None: value['extension'].unlink(missing_ok=True)
+        else: value['extension'].write_bytes(saved)
+        raise
+    value['unit'].parent.mkdir(parents=True, exist_ok=True)
+    value['unit'].write_text(value['unit_text'])
+    subprocess.run(['systemctl', '--user', 'daemon-reload'], check=True)
+    subprocess.run(['systemctl', '--user', 'enable', '--now', 'velora-spotify-bridge.service'], check=True)
+    marker = preference(); marker.parent.mkdir(parents=True, exist_ok=True); marker.write_text('enabled\n')
+    print('Extensão injetada e helper iniciado. Reinicie o Spotify para carregar o JS atualizado.')
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--apply', action='store_true', help='Autorizar o diff e aplicar; não reinicia o Spotify')
+    args = parser.parse_args()
+    try:
+        value = plan(); review(value)
+        if args.apply: apply(value)
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error: raise SystemExit(str(error))

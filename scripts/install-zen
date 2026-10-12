@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""Install an official Zen release in the user's Velora runtime directory."""
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import platform
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import urllib.request
+
+sys.dont_write_bytecode = True
+ROOT = Path(__file__).resolve().parents[1]
+loader = importlib.machinery.SourceFileLoader('velora_browser', str(ROOT / 'scripts/velora-browser'))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+browser = importlib.util.module_from_spec(spec); loader.exec_module(browser)
+
+
+def release_asset():
+    architecture = {'x86_64': 'x86_64', 'aarch64': 'aarch64'}.get(platform.machine())
+    if not architecture: raise RuntimeError('Arquitetura Zen não suportada: ' + platform.machine())
+    request = urllib.request.Request('https://api.github.com/repos/zen-browser/desktop/releases/latest',
+                                     headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'Velora-Shell'})
+    with urllib.request.urlopen(request, timeout=30) as response: release = json.load(response)
+    asset = next((a for a in release['assets'] if a['name'] == 'zen.linux-' + architecture + '.tar.xz'), None)
+    if not asset or not re.fullmatch(r'sha256:[0-9a-f]{64}', asset.get('digest', '')):
+        raise RuntimeError('Release oficial sem artefato/hash verificável para esta arquitetura.')
+    if not asset['browser_download_url'].startswith('https://github.com/zen-browser/desktop/releases/download/'):
+        raise RuntimeError('URL do artefato não pertence ao projeto oficial Zen.')
+    return release['tag_name'], asset
+
+
+def extract_verified(archive, digest, directory):
+    with archive.open('rb') as source: actual_digest = hashlib.file_digest(source, 'sha256').hexdigest()
+    if actual_digest != digest.removeprefix('sha256:'):
+        raise RuntimeError('Hash SHA256 do Zen não corresponde à release oficial.')
+    with tarfile.open(archive) as bundle:
+        bundle.extractall(directory, filter='data')
+    binaries = list(Path(directory).rglob('zen-bin'))
+    if len(binaries) != 1 or not binaries[0].is_file() or not os.access(binaries[0], os.X_OK):
+        raise RuntimeError('Release não produziu um executável Zen válido.')
+    return binaries[0].parent
+
+
+def install():
+    selected, _ = browser.select_browser()
+    if selected:
+        print('Zen já instalado; reutilizando ' + selected['version'] + ' (' + selected['path'] + ')')
+        return
+    target = browser.runtime_directory()
+    if target.exists(): raise RuntimeError('Destino existente preservado; inspecione/repare antes de reinstalar: ' + str(target))
+    version, asset = release_asset()
+    print('Zen oficial ' + version + ': ' + asset['browser_download_url'])
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='velora-zen-', dir=target.parent) as temporary:
+        directory = Path(temporary); archive = directory / 'zen.tar.xz'
+        with urllib.request.urlopen(asset['browser_download_url'], timeout=60) as response, archive.open('wb') as output:
+            shutil.copyfileobj(response, output)
+        content = extract_verified(archive, asset['digest'], directory / 'extract')
+        result = subprocess.run([str(content / 'zen-bin'), '--version'], capture_output=True, text=True, timeout=8)
+        if result.returncode or not re.search(r'\bZen\b.*\d+\.', result.stdout + result.stderr, re.I):
+            raise RuntimeError('Zen extraído não inicia: ' + result.stderr)
+        (content / 'velora-install.json').write_text(json.dumps({'version': version, 'sha256': asset['digest'], 'url': asset['browser_download_url']}))
+        content.rename(target)
+    applications = Path(os.environ.get('XDG_DATA_HOME') or Path.home() / '.local/share') / 'applications'
+    entry = applications / 'velora-zen.desktop'
+    if entry.exists():
+        print('Entrada pessoal existente preservada: ' + str(entry))
+    else:
+        applications.mkdir(parents=True, exist_ok=True)
+        launcher = str(ROOT / 'scripts/velora-browser').replace('\\', '\\\\').replace('"', '\\"').replace('`', '\\`').replace('$', '\\$').replace('%', '%%')
+        entry.write_text('[Desktop Entry]\nType=Application\nName=Zen Browser\nExec="' + launcher + '" %u\nIcon=' + str(target / 'browser/chrome/icons/default/default128.png')
+                         + '\nTerminal=false\nCategories=Network;WebBrowser;\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n')
+    selected, errors = browser.select_browser()
+    if not selected: raise RuntimeError('; '.join(errors))
+    print('Zen instalado: ' + selected['version'])
+
+
+if __name__ == '__main__':
+    try: install()
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error: raise SystemExit(str(error))

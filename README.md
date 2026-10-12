@@ -14,10 +14,41 @@ to it; it does not maintain a second source copy.
 ./scripts/velora start
 ```
 
-Use `./install.sh --skip-hypr` to leave compositor configuration untouched, or
-`--without-infinite-desktop` to disable the optional floating-window canvas.
-The default installation adds a managed include to the user's Hyprland
-configuration. Review `config/hyprland.conf.in` for its rules and bindings.
+The installer checks dependencies and QML imports, builds native modules,
+detects the running Hyprland configuration backend (Lua or hyprlang), and
+shows the managed include and any exact shortcut conflicts for approval.
+It preserves personal configuration and verifies all 28 official shortcuts
+after reloading the configuration. Reinstallation keeps one managed include.
+Use `--without-infinite-desktop` to omit the canvas's 16 shortcuts.
+
+Missing repository packages can be installed with explicit approval. pywal16
+is offered separately from PyPI, pinned and hash-verified in a private venv;
+an existing compatible installation is reused. For unattended installation,
+review the diff first with `./install.sh --dry-run`, then use:
+
+```sh
+./install.sh --non-interactive --install-deps --install-pywal --install-zen \
+  --accept-hypr-config --replace-conflicts
+```
+
+These flags authorize package installation and taking over only the official
+key combinations shown in the preview. `--skip-hypr` preserves compositor
+configuration but leaves installation incomplete, as does `--no-start`.
+The final state is `READY`, `READY_WITH_OPTIONAL_FEATURES_PENDING`,
+`BLOCKED_MISSING_DEPENDENCIES`, `BUILD_FAILED`, or `RUNTIME_VALIDATION_FAILED`.
+Fan+ remains optional and the normal installer only inspects its readiness.
+
+Velora must own the notification service. When Dunst, Mako or SwayNC already
+owns it, installation reports the exact conflict and asks before stopping that
+user service. `--replace-notification-server` grants this consent explicitly.
+The preference is retained for later starts; the competing service is neither
+uninstalled nor disabled. An unknown daemon is preserved. Runtime validation
+checks that the active Velora process actually owns the D-Bus service.
+
+Commands are linked into `~/.local/bin`. If it is absent from PATH, the
+installer prints the command for the current shell and an absolute launcher;
+it does not edit shell startup files. It creates `~/Pictures/Wallpapers` with
+`static`, `WallpaperSelector`, and `live` directories, preserving existing images.
 
 ```sh
 velora status
@@ -27,9 +58,23 @@ velora ipc composition status
 ```
 
 Super+K opens wallpapers, Super+W opens search, Super+R opens settings, and
-Super+L toggles the visual lock scene. Print and Shift+Print capture the
+Super+F opens Zen Browser, and Super+L toggles the visual
+lock scene. Print and Shift+Print capture the
 screen and a selected area. **The visual lock scene does not authenticate
 users or secure the session.** Use an authenticated locker when needed.
+
+Captures are saved in `~/Pictures/Screenshots` and copied as PNG to the Wayland
+clipboard. `wl-clipboard` is required; a failed copy is reported as a failure,
+and cancelling selection keeps the previous clipboard unchanged.
+
+Workspace changes use a smooth 900 ms vertical slide, with the shell bars
+fixed: moving to a higher workspace slides up; returning slides down.
+Both the shortcut and animation are installed by default for Lua and hyprlang.
+The installer reuses a working Zen installation or offers the official Linux
+release, verifies its SHA256, and installs under the user's XDG data directory.
+It does not change the default browser or install AUR packages.
+`--install-zen` authorizes this download in unattended mode; without consent,
+a missing Zen leaves installation blocked rather than reporting success.
 
 ## Desktop controls
 
@@ -45,8 +90,9 @@ users or secure the session.** Use an authenticated locker when needed.
 
 ## Dependencies
 
-The validated combination is Qt 6.11.2, Hyprland 0.56.2 and upstream
-[Quickshell revision 7d1c9a9](https://github.com/quickshell-mirror/quickshell/commit/7d1c9a9c6721606b129829134d6f614f015621e2).
+The Arch runtime was validated with Qt 6.12.0, Hyprland 0.56.2 and the
+distribution's Quickshell 0.3.2. The preflight tests QML imports rather than
+accepting an executable merely because it exists.
 Quickshell must be compiled against compatible Qt libraries. The compositor
 plugin must be rebuilt when the installed Hyprland ABI changes.
 
@@ -65,22 +111,57 @@ This optional command downloads pinned upstream Quickshell and CLI11 sources,
 builds outside the checkout and installs under the user's XDG data directory.
 It requires Quickshell's development dependencies, including Wayland,
 wayland-protocols, PipeWire, jemalloc, libdrm, libxcb, PAM and polkit.
-The launcher automatically selects this installation when present.
+The launcher prefers a compatible system package and uses this installation
+only when the system executable is absent or incompatible.
 
-Feature dependencies include `playerctl`, `wpctl`, NetworkManager (`nmcli`),
-BlueZ (`bluetoothctl`), `brightnessctl`, `powerprofilesctl`, `xdg-open`,
-`notify-send`, `ffmpeg`, ImageMagick, Pillow, `wal` (pywal16), `zenity`,
-`grim` and `slurp`. Wallpapers use `awww`/`swww`, `mpvpaper`, or
+On Arch/CachyOS, mandatory packages include `quickshell`, `cmake`, `make`,
+`gcc`, `pkgconf`, `qt6-base`, `qt6-declarative`, `qt6-multimedia`,
+`qt6-shadertools`, `qt6-5compat`, `qt6-wayland`, `qt6-svg`, `libpulse`,
+`fftw`, `python`, `python-pillow`, `imagemagick`, `bash`, `jq`, `ripgrep`,
+`networkmanager`, `wireplumber`, `brightnessctl`, `grim`, `slurp`,
+`wl-clipboard`, and `libnotify`, plus
+standard `coreutils`, `util-linux`, and `systemd` tools. Static wallpapers
+require `awww` with its daemon, or an existing `swww` with its daemon.
+Adaptive palettes require pywal16; `--install-pywal` installs it without
+modifying system Python. `./scripts/preflight --json` reports exact missing
+requirements and package names. Hyprland headers are checked separately for
+the optional native plugin; a mismatched ABI is rejected with a safe fallback.
+
+The image picker requires `zenity`; preflight checks it before startup. Failed
+or cancelled selections restore Settings without blocking subsequent openings.
+On computers with Bluetooth hardware, preflight also requires `bluez`,
+`bluez-utils` and `blueman`. Installation offers to enable `bluetooth.service`
+with explicit consent (`--enable-bluetooth` for unattended installs); it preserves
+radio blocks and paired devices. A blocked radio is reported with an actionable
+pending state. When installation starts BlueZ, it reopens Velora to refresh its
+Bluetooth connection; runtime verification checks that the shell sees the
+adapter as well as checking the service. Optional feature dependencies include `playerctl`,
+`powerprofilesctl`, `xdg-open`, and `ffmpeg`.
+Animated wallpapers use `mpvpaper`, or
 `linux-wallpaperengine` built against the installed FFmpeg libraries.
 Optional integrations include cava/glava,
 EasyEffects, Kitty, terminal themes and application themes.
 
-Spotify catalogue search requires Spotify with Spicetify. Add the extension
-`integrations/spotify/velora-spotify-bridge.js` to your Spicetify extensions,
-enable it in Spicetify, and run `python3 ./scripts/velora-spotify-bridge` while
-Spotify is open. This optional helper listens on `127.0.0.1:8765`; credentials
-stay in the Spotify client and bridge state goes to the user's XDG cache.
+Spotify catalogue search requires Spotify with Spicetify. The installer offers
+the existing extension when it detects Spicetify, including a private CLI in
+`~/.spicetify`. Review `./scripts/install-spotify-bridge`, then use
+`./scripts/install-spotify-bridge --apply`, or `./install.sh --install-spotify-bridge`.
+It preserves personal extensions and Marketplace, injects Velora's JS, and
+enables the user's `velora-spotify-bridge.service`. Spotify needs restarting to
+load newly injected code; installation does not interrupt playback itself.
+Subsequent reinstalls retain the approved integration. This optional helper
+listens on `127.0.0.1:8765`; credentials stay in the Spotify client and bridge
+state goes to the user's XDG cache. Search definitions come from the installed
+client's own search bundle, including when Spotify is on Home.
 Playback controls use MPRIS and work without this helper. Lyrics use LRCLIB.
+
+Zen uses the shell's final palette, including selected surface/tone and neutral
+wallpaper correction, instead of independently tinting the raw wal palette.
+Palette generation refreshes existing managed browser CSS without changing
+personal imports or preferences. The sidebar clock uses the same bundled
+Liberation Serif face as the edge Lyrics panel, with a thin weight and no glow.
+Zen's new-tab clock uses this bundled serif face in italic, at normal weight
+without shadows, so a clean installation does not depend on system fonts.
 
 ## Source layout
 

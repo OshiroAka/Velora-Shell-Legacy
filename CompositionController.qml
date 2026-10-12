@@ -509,6 +509,9 @@ Scope {
         function settingsChooseImage(target: int): bool {
             return editorController.chooseImage(target)
         }
+        function settingsChooseBarAvatar(): bool {
+            return editorController.chooseBarAvatar()
+        }
         function editorShow(space: string): bool {
             editorController.show(space)
             return editorController.beginEditing(space)

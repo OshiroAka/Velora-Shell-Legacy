@@ -34,8 +34,8 @@ wal_tone_args=(--cols16 darken)
 if [[ "$palette_tone" == "light" ]]; then
     wal_tone_args=(-l --cols16 lighten)
 fi
-PYWAL_CACHE_DIR="$palette_work" \
-    wal -n -q -s -t -e "${wal_tone_args[@]}" \
+PYWAL_CACHE_DIR="$palette_work" XDG_CONFIG_HOME="$palette_work/config" \
+    "$palette_project_dir/scripts/velora-wal" -n -q -s -t -e "${wal_tone_args[@]}" \
         -i "$palette_input"
 
 palette_source=$(find "$palette_work/schemes" -maxdepth 1 -type f -name '*.json' -print -quit)
@@ -56,6 +56,10 @@ jq --arg wallpaper "$source_path" --arg tone "$palette_tone" \
 chmod 0644 "$palette_work/colors.json.next"
 mv -f -- "$palette_work/colors.json.next" "$palette_cache_root/colors.json"
 printf '%s\n' "$palette_cache_root/colors.json"
+
+# Publish the complete shell palette before refreshing the already managed
+# browser CSS; this avoids a second raw-wal palette tinting monochrome chrome.
+python3 "$palette_project_dir/scripts/velora-zen-theme.py" --managed-only --quiet
 
 if [[ "${4:-restore}" == "shuffle" ]]; then
     python3 "$palette_project_dir/scripts/velora-pywal-theme.py" --no-ipc >/dev/null

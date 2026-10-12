@@ -3,14 +3,17 @@ set -euo pipefail
 
 mode="${1:-full}"
 
-if ! command -v grim >/dev/null 2>&1; then
-  notify-send "Velora screenshot" "grim nao esta instalado." >/dev/null 2>&1 || true
-  exit 1
-fi
+for tool in grim wl-copy; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    printf 'Velora screenshot: %s ausente; execute ./install.sh para instalar as dependências.\n' "$tool" >&2
+    notify-send "Velora screenshot" "$tool ausente; captura/clipboard pendentes." >/dev/null 2>&1 || true
+    exit 1
+  fi
+done
 
 out_dir="$HOME/Pictures/Screenshots"
 mkdir -p "$out_dir"
-out_file="$out_dir/velora-${mode}-$(date +'%Y-%m-%d_%H-%M-%S').png"
+out_file="$out_dir/velora-${mode}-$(date +'%Y-%m-%d_%H-%M-%S_%N').png"
 
 case "$mode" in
   full|screen)
@@ -32,8 +35,10 @@ case "$mode" in
     ;;
 esac
 
-if command -v wl-copy >/dev/null 2>&1; then
-  wl-copy --type image/png < "$out_file" || wl-copy < "$out_file" || true
+if ! wl-copy --type image/png < "$out_file"; then
+  printf 'Velora screenshot: imagem salva, mas a cópia falhou: %s\n' "$out_file" >&2
+  notify-send "Velora screenshot" "Salvo; falha ao copiar: $out_file" >/dev/null 2>&1 || true
+  exit 1
 fi
 
 notify-send "Velora screenshot" "Salvo e copiado: $out_file" >/dev/null 2>&1 || true

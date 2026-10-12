@@ -1,64 +1,258 @@
 #!/usr/bin/env python3
-"""Connect this checkout to the user's session without copying its source."""
+"""Install a verified Velora runtime and managed Hyprland shortcuts."""
 import argparse
+import importlib.machinery
+import importlib.util
+import json
 import os
-import re
+from pathlib import Path
+import shlex
 import subprocess
 import sys
-from pathlib import Path
+import time
 
-root = Path(__file__).resolve().parents[1]
-parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--skip-hypr", action="store_true")
-parser.add_argument("--without-infinite-desktop", action="store_true")
-parser.add_argument("--with-infinite-desktop", action="store_true")
-parser.add_argument("--without-fanplus", action="store_true", help="Ignorar a instalação opcional de Fan+; não altera a ventoinha")
-parser.add_argument("--install-fanplus-deps", action="store_true", help="Instalar dependências Fan+ dos repositórios Arch/CachyOS no notebook suportado")
-args = parser.parse_args()
-if args.without_fanplus and args.install_fanplus_deps:
-    parser.error("--without-fanplus e --install-fanplus-deps são incompatíveis")
-config_home = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-bin_dir = Path.home() / ".local/bin"
-bin_dir.mkdir(parents=True, exist_ok=True)
-for name in ("velora", "velora-shell", "Velora", "velyrics", "infinite-desktop", "cmatrix"):
-    source = root / "scripts" / ("velora" if name in {"Velora", "velora-shell"} else "velora-cmatrix" if name == "cmatrix" else name)
-    target = bin_dir / name
-    if target.is_dir():
-        raise SystemExit(f"Refusing to replace a directory: {target}")
-    temporary = target.with_name(target.name + ".new")
-    temporary.unlink(missing_ok=True)
-    temporary.symlink_to(source)
-    temporary.replace(target)
-subprocess.run([str(root / "scripts/init-config")], check=True)
-feature = config_home / "velora-shell/infinite-desktop"
-if args.without_infinite_desktop:
-    feature.unlink(missing_ok=True)
-else:
-    feature.touch()
-if not args.skip_hypr:
-    directory = config_home / "hypr"
+sys.dont_write_bytecode = True
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def helper(name):
+    loader = importlib.machinery.SourceFileLoader(name.replace('-', '_'), str(ROOT / 'scripts' / name))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec); loader.exec_module(module)
+    return module
+
+
+def command(arguments, **kwargs):
+    return subprocess.run(arguments, text=True, **kwargs)
+
+
+def approve(message, authorized=False, non_interactive=False):
+    if authorized: return True
+    if non_interactive or not sys.stdin.isatty(): return False
+    return input(message + ' [s/N] ').strip().lower() in ('s', 'sim', 'y', 'yes')
+
+
+def outcome(state, detail='', pending=()):
+    print('INSTALLER: ' + state)
+    if detail: print(detail)
+    for item in pending: print('Opcional pendente: ' + item)
+    return 0 if state in ('READY', 'READY_WITH_OPTIONAL_FEATURES_PENDING') else 1
+
+
+def install_packages(packages, args):
+    release = Path('/etc/os-release').read_text()
+    if 'arch' not in release.lower() and 'cachyos' not in release.lower():
+        print('Instalação assistida disponível para Arch/CachyOS; use os pacotes equivalentes da distribuição.')
+        return False
+    print('Pacotes dos repositórios oficiais: ' + ' '.join(packages))
+    print('Efeito: instala dependências do shell via pacman; não instala AUR nem modifica Fan+.')
+    if not approve('Autoriza instalar estes pacotes?', args.install_deps, args.non_interactive): return False
+    # Never refresh only package databases: Arch does not support partial upgrades.
+    return command(['sudo', 'pacman', '-S', '--needed', *packages]).returncode == 0
+
+
+def install_links():
+    directory = Path.home() / '.local/bin'
+    sources = {name: ROOT / 'scripts' / ('velora' if name in ('velora', 'velora-shell', 'Velora')
+                else 'velora-cmatrix' if name == 'cmatrix' else name)
+               for name in ('velora', 'velora-shell', 'Velora', 'velyrics', 'infinite-desktop', 'cmatrix')}
+    for name, source in sources.items():
+        target = directory / name
+        if target.exists() and (not target.is_symlink() or target.resolve() != source):
+            raise RuntimeError('Comando pessoal preservado; destino ocupado: ' + str(target))
+        if target.is_symlink() and target.resolve() != source:
+            raise RuntimeError('Link pessoal preservado; destino ocupado: ' + str(target))
     directory.mkdir(parents=True, exist_ok=True)
-    main = directory / "hyprland.conf"
-    include = directory / "velora-hyprland.conf"
-    rules = subprocess.run([sys.executable, str(root / "scripts/native-blur"), "rules",
-                            str(root / "config/hyprland.conf.in")], capture_output=True, text=True)
-    if rules.returncode:
-        raise SystemExit(rules.stderr.strip() + "\nConfiguração Hyprland preservada; use --skip-hypr ou instale os headers/binário corretos.")
-    snippet = rules.stdout.replace("@ROOT@", str(root))
-    if not args.without_infinite_desktop:
-        canvas = (root / "scripts/infinite-desktop.conf").read_text()
-        canvas = re.sub(r'(?<=exec, )infinite-desktop\b', '"' + str(root / "scripts/infinite-desktop") + '"', canvas)
-        (directory / "infinite-desktop.conf").write_text(canvas)
-        snippet += f"\nsource = {directory / 'infinite-desktop.conf'}\n"
-    include.write_text(snippet)
-    text = main.read_text() if main.exists() else ""
-    # Consolidate previously managed includes; leave other compositor settings intact.
-    text = re.sub(r'^\s*source\s*=.*(?:velora-hyprland|project-helix)\.conf\s*$', '', text, flags=re.M)
-    main.write_text(text.rstrip() + f"\nsource = {include}\n")
-print("Velora Shell installed from " + str(root))
-if not args.without_fanplus:
-    command = [sys.executable, str(root / "scripts/install-fanplus")]
-    if args.install_fanplus_deps:
-        command.append("--install-deps")
-    if subprocess.run(command, check=False).returncode != 0:
-        print("Velora instalado; Fan+ continua pendente. Siga as instruções acima e execute novamente scripts/install-fanplus.")
+    for name, source in sources.items():
+        target = directory / name
+        if not target.is_symlink(): target.symlink_to(source)
+    return directory
+
+
+def print_path(directory, preflight):
+    if preflight.path_present(directory):
+        print('PATH: PASS (~/.local/bin disponível neste processo)')
+        return
+    shell = Path(os.environ.get('SHELL', '/bin/bash')).name
+    print('PATH: ~/.local/bin não está no PATH deste processo. Configurações do shell preservadas.')
+    if shell == 'fish': print('Sessão atual: fish_add_path --path ' + shlex.quote(str(directory)))
+    else: print('Sessão atual: export PATH=' + shlex.quote(str(directory)) + ':"$PATH"')
+    print('Disponível imediatamente por caminho absoluto: ' + str(directory / 'velora') + ' start|status|restart|stop')
+
+
+def parser():
+    value = argparse.ArgumentParser(description=__doc__)
+    value.add_argument('--skip-hypr', action='store_true', help='Não instalar atalhos; a instalação permanece pendente')
+    group = value.add_mutually_exclusive_group()
+    group.add_argument('--without-infinite-desktop', action='store_true')
+    group.add_argument('--with-infinite-desktop', action='store_true')
+    value.add_argument('--without-fanplus', action='store_true')
+    value.add_argument('--install-fanplus-deps', action='store_true')
+    value.add_argument('--install-deps', action='store_true', help='Autorizar pacman --needed para os pacotes obrigatórios informados')
+    value.add_argument('--install-pywal', action='store_true', help='Autorizar pywal16 fixado e verificado do PyPI em um venv privado')
+    value.add_argument('--install-zen', action='store_true', help='Autorizar instalação do Zen oficial com SHA256 verificado no diretório do usuário')
+    value.add_argument('--replace-notification-server', action='store_true', help='Autorizar Velora como servidor; parar somente serviço conhecido concorrente na sessão')
+    value.add_argument('--install-spotify-bridge', action='store_true', help='Autorizar integração opcional Spicetify/Spotify, extensão e helper do usuário')
+    value.add_argument('--enable-bluetooth', action='store_true', help='Autorizar habilitar/iniciar bluetooth.service quando há hardware; não desbloqueia nem pareia dispositivos')
+    value.add_argument('--non-interactive', action='store_true')
+    value.add_argument('--accept-hypr-config', action='store_true', help='Autorizar o diff da integração gerenciada')
+    value.add_argument('--replace-conflicts', action='store_true', help='Autorizar somente conflitos com as combinações oficiais')
+    value.add_argument('--no-start', action='store_true', help='Preparar sem iniciar; resultado permanece pendente de runtime')
+    value.add_argument('--dry-run', action='store_true', help='Inspecionar dependências/diff sem gravar nem instalar')
+    value.add_argument('--hypr-config', type=Path, help='Configuração principal; deve corresponder ao backend ativo')
+    return value
+
+
+def main(argv=None):
+    args = parser().parse_args(argv)
+    if args.without_fanplus and args.install_fanplus_deps:
+        raise SystemExit('--without-fanplus e --install-fanplus-deps são incompatíveis')
+    preflight, integration = helper('preflight'), helper('hyprland-integration')
+    config_home = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')
+    requirements = preflight.inspect()
+    print('Qt: ' + requirements['qt'])
+    print('Quickshell: ' + json.dumps(requirements['quickshell'], ensure_ascii=False))
+    if not requirements['ready']:
+        print('Obrigatórios ausentes/incompatíveis: ' + ', '.join(requirements['missing']))
+        if args.dry_run:
+            return outcome('BLOCKED_MISSING_DEPENDENCIES')
+        if requirements['packages'] and not install_packages(requirements['packages'], args):
+            return outcome('BLOCKED_MISSING_DEPENDENCIES')
+        if 'pywal16' in requirements.get('sourceFeatures', []):
+            print('Efeito: instala pywal16 3.8.15 do PyPI (hash verificado) em ~/.local/share/velora-shell/runtime/pywal; Python do sistema preservado.')
+            if not approve('Autoriza a instalação privada do pywal16?', args.install_pywal, args.non_interactive):
+                return outcome('BLOCKED_MISSING_DEPENDENCIES', 'pywal16 pendente; use --install-pywal para autorizar em modo não interativo.')
+            if command([str(ROOT / 'scripts/build-pywal')]).returncode:
+                return outcome('BLOCKED_MISSING_DEPENDENCIES', 'Instalação privada do pywal16 falhou.')
+        if 'zen-browser' in requirements.get('sourceFeatures', []):
+            print('Efeito: instala o binário oficial Zen no diretório XDG de dados do usuário, com SHA256 verificado; sem AUR nem alteração do navegador padrão.')
+            if not approve('Autoriza instalar o Zen Browser para SUPER+F?', args.install_zen, args.non_interactive):
+                return outcome('BLOCKED_MISSING_DEPENDENCIES', 'Zen pendente; use --install-zen para autorizar em modo não interativo.')
+            if command([str(ROOT / 'scripts/install-zen')]).returncode:
+                return outcome('BLOCKED_MISSING_DEPENDENCIES', 'Instalação do Zen Browser falhou.')
+        requirements = preflight.inspect()
+        if not requirements['ready']:
+            return outcome('BLOCKED_MISSING_DEPENDENCIES', '; '.join(requirements['missing']))
+    pending = list(requirements['optionalPending'])
+    plan = None
+    if not args.skip_hypr:
+        try:
+            backend = integration.runtime_backend()
+            active = integration.active_config(config_home / 'hypr', backend)
+            if args.hypr_config and args.hypr_config.resolve() != active.resolve():
+                raise RuntimeError('--hypr-config difere da configuração da instância ativa: ' + str(active))
+            plan = integration.prepare(config_home / 'hypr', infinite=not args.without_infinite_desktop,
+                                       backend=backend, main=active)
+            integration.validate(plan['snippet'], backend)
+            print('Hyprland: backend=' + backend + ', configuração=' + str(active))
+            print(integration.diff(plan))
+            for conflict in plan['conflicts']:
+                print('Conflito: ' + conflict['label'] + ' → ' + conflict['replacement'])
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            return outcome('RUNTIME_VALIDATION_FAILED', 'Integração/atalhos não validados: ' + str(error))
+    if args.dry_run:
+        print('DRY_RUN: somente inspeção; nenhuma instalação realizada.')
+        return 0
+    # Dependencies, build and import validation precede any session/config writes.
+    build = command([str(ROOT / 'scripts/build')], capture_output=True)
+    if build.returncode:
+        return outcome('BUILD_FAILED', build.stderr[-4000:])
+    build_directory = build.stdout.strip().splitlines()[-1]
+    parsed = command([str(ROOT / 'scripts/runtime-check'), '--parse', '--build-dir', build_directory], capture_output=True)
+    if parsed.returncode:
+        return outcome('RUNTIME_VALIDATION_FAILED', parsed.stdout + parsed.stderr)
+    print('BUILD: PASS; QML IMPORTS: PASS')
+    if plan:
+        unchanged_main = plan.get('original') == plan.get('proposed') and 'original' in plan
+        unchanged_snippet = plan.get('include') is not None and plan['include'].exists() and plan['include'].read_text() == plan['snippet']
+        authorized = approve('Autoriza o diff acima e os conflitos listados?',
+                             (unchanged_main and unchanged_snippet and not plan['conflicts']) or
+                             (args.accept_hypr_config and (not plan['conflicts'] or args.replace_conflicts)), args.non_interactive)
+        if not authorized:
+            return outcome('RUNTIME_VALIDATION_FAILED', 'Configuração pessoal preservada; atalhos aguardam autorização do diff.')
+        try: integration.apply(plan)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            return outcome('RUNTIME_VALIDATION_FAILED', 'Integração revertida: ' + str(error))
+        print('SHORTCUTS: PASS (' + str(len(plan['binds'])) + ' registrados, sem duplicações)')
+    bluetooth = helper('velora-bluetooth-setup')
+    bluetooth_state = bluetooth.status()
+    bluetooth_service_started = False
+    if bluetooth_state['hardware']:
+        if not bluetooth_state['active'] or not bluetooth_state['enabled']:
+            print('Efeito: habilita e inicia bluetooth.service; preserva o estado do rádio e dispositivos pareados.')
+            if not approve('Autoriza habilitar o serviço Bluetooth?', args.enable_bluetooth, args.non_interactive):
+                return outcome('RUNTIME_VALIDATION_FAILED', 'Bluetooth indisponível após login; use --enable-bluetooth após revisar o efeito.')
+            if command([sys.executable, str(ROOT / 'scripts/velora-bluetooth-setup'), '--enable-service']).returncode:
+                return outcome('RUNTIME_VALIDATION_FAILED', 'Falha ao habilitar o serviço Bluetooth.')
+            bluetooth_state = bluetooth.status()
+            if not bluetooth_state['active'] or not bluetooth_state['enabled']:
+                return outcome('RUNTIME_VALIDATION_FAILED', 'O serviço Bluetooth não ficou ativo e habilitado.')
+            bluetooth_service_started = True
+        if bluetooth_state['blocked']:
+            pending.append('Bluetooth bloqueado por rfkill; libere o rádio para buscar dispositivos')
+    try:
+        notifications = helper('velora-notifications')
+        notification_state = notifications.status()
+        if notification_state['conflict']:
+            print('Conflito de notificações: ' + notification_state['daemon'])
+            if not notification_state['unit']:
+                raise RuntimeError('Servidor desconhecido preservado; configure o proprietário de org.freedesktop.Notifications.')
+            if not approve('Autoriza parar esse serviço na sessão e usar Velora nas próximas inicializações?',
+                           args.replace_notification_server or (notifications.preference().is_file()
+                               and notifications.preference().read_text().strip() == 'velora'), args.non_interactive):
+                raise RuntimeError('Notificações aguardam autorização; use --replace-notification-server após revisar o conflito.')
+            choice = notifications.preference()
+            choice.parent.mkdir(parents=True, exist_ok=True); choice.write_text('velora\n')
+            notifications.claim()
+        directory = install_links()
+        if command([str(ROOT / 'scripts/init-config')]).returncode:
+            raise RuntimeError('Não foi possível inicializar a configuração Velora.')
+        feature = config_home / 'velora-shell/infinite-desktop'
+        if args.without_infinite_desktop: feature.unlink(missing_ok=True)
+        else: feature.touch()
+    except (OSError, RuntimeError) as error:
+        return outcome('RUNTIME_VALIDATION_FAILED', str(error))
+    print_path(directory, preflight)
+    print('Wallpapers: ' + str(Path.home() / 'Pictures/Wallpapers') + ' (static, WallpaperSelector, live)')
+    if args.skip_hypr:
+        return outcome('RUNTIME_VALIDATION_FAILED', 'Atalhos não instalados (--skip-hypr); instalação incompleta.')
+    if args.no_start:
+        return outcome('RUNTIME_VALIDATION_FAILED', 'Build/imports/atalhos conferidos; inicialização não validada (--no-start).')
+    startup_action = 'restart' if bluetooth_service_started else 'start'
+    if bluetooth_service_started:
+        print('Reabrindo Velora após iniciar BlueZ para atualizar os adaptadores Bluetooth.')
+    if command([str(ROOT / 'scripts/velora'), startup_action]).returncode:
+        return outcome('RUNTIME_VALIDATION_FAILED', 'Falha ao iniciar o shell.')
+    validation = None
+    for _ in range(20):
+        validation = command([str(ROOT / 'scripts/runtime-check')], capture_output=True)
+        if validation.returncode == 0: break
+        time.sleep(.25)
+    if validation.returncode:
+        return outcome('RUNTIME_VALIDATION_FAILED', validation.stdout + validation.stderr)
+    native = json.loads(command([sys.executable, str(ROOT / 'scripts/native-blur'), 'status'], capture_output=True).stdout)
+    if not native['available']: pending.append('Plugin nativo: ' + native['diagnostic'])
+    print('SHELL STARTUP: PASS; RUNTIME: PASS')
+    print('ZEN: ' + json.dumps(requirements.get('zen', {}), ensure_ascii=False))
+    print('Validação visual humana: PENDING (build/IPC não confirmam aparência).')
+    spotify = helper('install-spotify-bridge')
+    if spotify.executable():
+        if approve('Integrar a extensão Velora ao Spicetify e iniciar seu helper local?', args.install_spotify_bridge or spotify.configured(), args.non_interactive):
+            if command([str(ROOT / 'scripts/install-spotify-bridge'), '--apply']).returncode:
+                pending.append('Spotify catálogo: falha ao configurar a extensão/helper')
+            else:
+                print('Spotify catálogo: extensão/helper configurados; reinicie Spotify para carregar a extensão.')
+        else:
+            pending.append('Spotify catálogo: integração opcional Spicetify não autorizada')
+    if not args.without_fanplus:
+        # Fan+ is inspected only; provisioning and fan control remain explicit opt-ins.
+        fan_args = ['--install-deps'] if args.install_fanplus_deps else ['--check']
+        if command([sys.executable, str(ROOT / 'scripts/install-fanplus'), *fan_args]).returncode:
+            pending.append('Fan+ (opcional; execute scripts/install-fanplus separadamente)')
+    return outcome('READY_WITH_OPTIONAL_FEATURES_PENDING' if pending else 'READY', pending=pending)
+
+
+if __name__ == '__main__':
+    try: raise SystemExit(main())
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        raise SystemExit(outcome('RUNTIME_VALIDATION_FAILED', str(error)))

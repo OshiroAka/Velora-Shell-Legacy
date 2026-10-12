@@ -1052,8 +1052,8 @@ apply_theme_core() {
   local expected_stamp="${2:-}"
 
   [ -f "$img" ] || return 0
-  if command -v wal >/dev/null 2>&1; then
-    run_low_priority wal -i "$img" -n -q >/dev/null 2>&1 || true
+  if "$base_dir/scripts/velora-wal" --resolve >/dev/null 2>&1; then
+    run_low_priority "$base_dir/scripts/velora-wal" -i "$img" -n -q >/dev/null 2>&1 || true
   fi
 
   if [ -n "$expected_stamp" ] && ! theme_stamp_matches "$expected_stamp"; then

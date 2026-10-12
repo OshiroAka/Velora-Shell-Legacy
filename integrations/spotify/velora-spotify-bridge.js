@@ -283,7 +283,49 @@
 // https://spicetify.app/docs/development/api-wrapper/methods/cosmos-async
 (function veloraCatalogue() {
     const endpoint = "http://127.0.0.1:8765";
+    let nativeSearchDefinition = null;
+    async function searchDefinition(api) {
+        if (api.Definitions?.searchTracks) return api.Definitions.searchTracks;
+        if (api.Definitions?.searchDesktop) return api.Definitions.searchDesktop;
+        if (nativeSearchDefinition) return nativeSearchDefinition;
+        // Spotify loads search definitions lazily, so they may not exist on
+        // Home. Read the current client's own bundle rather than hardcoding a
+        // persisted-query hash that breaks when Spotify updates.
+        const response = await fetch(new URL("xpui-routes-search.js", document.baseURI));
+        if (!response.ok) throw new Error("search-definition-unavailable");
+        const bundle = await response.text();
+        for (const name of ["searchTracks", "searchDesktop"]) {
+            const match = bundle.match(new RegExp('"' + name + '",\\s*"query",\\s*"([0-9a-f]{64})"'));
+            if (match) {
+                nativeSearchDefinition = {name, operation: "query", sha256Hash: match[1], value: null};
+                return nativeSearchDefinition;
+            }
+        }
+        throw new Error("search-definition-unavailable");
+    }
     async function catalogue(query) {
+        const api = Spicetify.GraphQL;
+        if (api?.Request) {
+            try {
+                const definition = await searchDefinition(api);
+                const response = await api.Request(definition, {
+                    searchTerm: query, offset: 0, limit: 15, numberOfTopResults: 5,
+                    includeAudiobooks: false, includeArtistHasConcertsField: false,
+                    includePreReleases: false, includeAlbumPreReleases: false,
+                    includeAuthors: false, includeEpisodeContentRatingsV2: false,
+                    isPrefix: false, sectionFilters: ["GENERIC"], clientFeatures: []
+                });
+                const items = response?.data?.searchV2?.tracksV2?.items;
+                if (!Array.isArray(items)) throw new Error("search-unavailable");
+                return items.map(item => item.item?.data || item.item || item.data).filter(track => track?.uri).map(track => ({
+                    uri: track.uri, title: track.name,
+                    artist: (track.artists?.items || []).map(artist => artist.profile?.name || artist.name || "").join(", "),
+                    album: track.albumOfTrack?.name || "",
+                    art: track.albumOfTrack?.coverArt?.sources?.[0]?.url || "",
+                    duration: track.duration?.totalMilliseconds || 0
+                }));
+            } catch (_) { /* Older clients can still use the Web API fallback. */ }
+        }
         try {
             const response = await Spicetify.CosmosAsync.get(
                 "https://api.spotify.com/v1/search?type=track&limit=15&q=" + encodeURIComponent(query));
@@ -294,21 +336,7 @@
                 duration: track.duration_ms || 0
             }));
         } catch (_) { /* Use the client search when the Web API is unavailable. */ }
-        const api = Spicetify.GraphQL;
-        if (!api?.Definitions?.searchDesktop) throw new Error("search-unavailable");
-        const response = await api.Request(api.Definitions.searchDesktop, {
-            searchTerm: query, offset: 0, limit: 15, numberOfTopResults: 5,
-            includeAudiobooks: false, includeArtistHasConcertsField: false, includePreReleases: false
-        });
-        const items = response?.data?.searchV2?.tracksV2?.items;
-        if (!Array.isArray(items)) throw new Error("search-unavailable");
-        return items.map(item => item.item?.data || item.item || item.data).filter(Boolean).map(track => ({
-            uri: track.uri, title: track.name,
-            artist: (track.artists?.items || []).map(artist => artist.profile?.name || artist.name || "").join(", "),
-            album: track.albumOfTrack?.name || "",
-            art: track.albumOfTrack?.coverArt?.sources?.[0]?.url || "",
-            duration: track.duration?.totalMilliseconds || 0
-        }));
+        throw new Error("search-unavailable");
     }
     async function listen() {
         if (!window.Spicetify?.CosmosAsync) { setTimeout(listen, 1000); return; }
@@ -322,7 +350,10 @@
                 catch (_) { result = { id: request.id, ok: false, reason: "search-unavailable", tracks: [] }; }
                 await fetch(endpoint + "/result", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(result) });
             }
-            setTimeout(listen, 100);
+            // A hidden Spotify window can throttle timers for a whole minute.
+            // Long-polling already waits on the server; continue immediately
+            // after a reply so catalogue requests work from other workspaces.
+            listen();
         } catch (_) { setTimeout(listen, 3000); }
     }
     listen();

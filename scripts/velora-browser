@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Launch the installed Zen Browser or Velora's verified private installation."""
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+sys.dont_write_bytecode = True
+
+
+def runtime_directory():
+    return Path(os.environ.get('XDG_DATA_HOME') or Path.home() / '.local/share') / 'velora-shell/runtime/zen'
+
+
+def select_browser():
+    private = runtime_directory() / 'zen-bin'
+    candidates = list(dict.fromkeys(p for p in (shutil.which('zen-browser'), shutil.which('zen'),
+                      str(private) if private.is_file() else None) if p))
+    errors = []
+    for executable in candidates:
+        try:
+            result = subprocess.run([executable, '--version'], capture_output=True, text=True, timeout=8)
+            label = (result.stdout + result.stderr).strip()
+            if result.returncode or not re.search(r'\bZen\b.*\d+\.', label, re.I):
+                raise RuntimeError(label or 'Zen não respondeu à sondagem de versão')
+            return {'path': executable, 'version': label}, errors
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            errors.append(str(error))
+    return {}, errors or ['Zen Browser não encontrado']
+
+
+if __name__ == '__main__':
+    selected, errors = select_browser()
+    if not selected: raise SystemExit('; '.join(errors) + '; execute ./install.sh para instalar o Zen.')
+    if sys.argv[1:] == ['--resolve']: print(selected['path'])
+    else: os.execv(selected['path'], [selected['path'], *sys.argv[1:]])

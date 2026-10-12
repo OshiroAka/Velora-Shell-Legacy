@@ -25,7 +25,14 @@ Scope {
     }
     function dispatch(command) {
         const name = String(command).split(" ")[0].replace("velora-blur:", "")
-        if (supports(name)) Hyprland.dispatch(command)
+        if (!supports(name)) return
+        if (supports("lua-dispatch")) {
+            // Lua configs require a callable dispatcher, not legacy text.
+            // JSON strings quote monitor names/arguments without evaluating them.
+            const arguments = String(command).slice(String(command).indexOf(" ") + 1)
+            Hyprland.dispatch("function() hl.plugin.velora.dispatch("
+                + JSON.stringify(name) + "," + JSON.stringify(arguments) + ") end")
+        } else Hyprland.dispatch(command)
     }
     function refresh() {
         // Recover if the loader was interrupted before its finally/resume IPC.
