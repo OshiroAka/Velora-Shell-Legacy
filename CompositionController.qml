@@ -32,7 +32,10 @@ Scope {
     readonly property var forecastService: weather
     readonly property var mediaService: media
     readonly property var audioVisualizer: visualizer
+    readonly property bool desktopVisualizerSuppressed: !!root.shell && root.shell.edgeMediaOpen
+    readonly property real visualizerDockProgress: root.shell ? root.shell.visualizerDockProgress : 0
     readonly property bool desktopVisualizerVisible: config.desktopVisualizerEnabled
+        && (!desktopVisualizerSuppressed || visualizerDockProgress < .999)
         && visualizer.running && !preview.shown
         && !(editorController.shown && editorController.mode === "editing")
     readonly property bool nativeBarMaterial: Platform.NativeBlur.supportsBarMaterial(visualizer)
@@ -155,7 +158,16 @@ Scope {
             || (root.shell && root.shell.weatherTopOpen
                 && root.shell.weatherTopMode !== "search")
     }
-    Services.VisualizerService { id: visualizer; active: true }
+    Services.VisualizerDemand {
+        id: visualizerDemand
+        desktopEnabled: config.desktopVisualizerEnabled && (!root.desktopVisualizerSuppressed || root.visualizerDockProgress < .999)
+        editingDesktop: editorController.shown && editorController.mode === "editing"
+        lockOccluding: preview.occluding
+        railVisible: !!root.shell && root.shell.sideBarLayoutEnabled && root.shell.sidebarMediaEnabled
+        edgeMediaVisible: !!root.shell && root.shell.edgeSpectrumOpen
+        mediaPlaying: media.playing
+    }
+    Services.VisualizerService { id: visualizer; active: visualizerDemand.active }
     Services.WallpaperService { id: wallpaper }
     Services.CompositionProfileService {
         id: compositionProfiles
@@ -245,6 +257,8 @@ Scope {
     }
 
     Surfaces.SharedWidgetsHost {
+        visualizerSuppressed: root.desktopVisualizerSuppressed
+        visualizerDockProgress: root.visualizerDockProgress
         nativeBarMaterial: root.nativeBarMaterial
         opticsGeneration: root.opticsGeneration
         barOnRight: root.shell ? root.shell.barOnRight : false
@@ -284,6 +298,20 @@ Scope {
         editor: sceneEditor
     }
 
+    Timer {
+        id: nativeAppearanceDebounce
+        interval: 32; repeat: false
+        onTriggered: root.syncNativeAppearance()
+    }
+    function openMonitorSettings() {
+        const anchors = topbarController.items.filter(entry => entry.host.screen.name === compositor.focusedMonitorName)
+        const entry = anchors.find(entry => entry.type === "monitor")
+            || anchors.find(entry => entry.type === "controls") || anchors.find(entry => entry.type === "clock") || anchors[0]
+        if (!entry) return false
+        topbarController.show("monitor", entry.item, entry.host, false)
+        return true
+    }
+
     Connections {
         target: compositionProfiles
         function onProfileApplied() {
@@ -304,10 +332,10 @@ Scope {
             if (config.ready && Number(config.valueAt(config.userData, "appearance.referenceVersion", 0)) < 3)
                 config.applyReferenceAppearance()
         }
-        function onConfigurationChanged() {
-            if (!editorController.mounted)
-                root.syncNativeAppearance()
-        }
+        function onBlurStrengthChanged() { nativeAppearanceDebounce.restart() }
+        function onAppearanceContrastChanged() { nativeAppearanceDebounce.restart() }
+        function onReflectionStrengthChanged() { nativeAppearanceDebounce.restart() }
+        function onVisualStyleChanged() { nativeAppearanceDebounce.restart() }
     }
 
     Connections {
@@ -351,6 +379,9 @@ Scope {
                 playing: media.playing
             },
             visualizer: {
+                active: visualizer.active,
+                edgeMediaOpen: root.desktopVisualizerSuppressed,
+                dockProgress: root.visualizerDockProgress,
                 running: visualizer.running,
                 desktopMaterial: root.nativeBarMaterial,
                 desktopVisible: root.desktopVisualizerVisible,

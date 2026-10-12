@@ -30,12 +30,20 @@ Item {
     function fitPanel(w, h, x, y) { return Geometry.fit(surfaceArea, w, h, x, y) }
     SettingsHome {
         id: settingsHome
-        readonly property real wantedWidth: Math.min(1020, parent.width * 0.90)
-        readonly property real wantedHeight: Math.min(760, parent.height * 0.88)
-        readonly property var fitted: root.fitPanel(wantedWidth, wantedHeight, (parent.width - wantedWidth) / 2, (parent.height - wantedHeight) / 2)
-        width: fitted.width; height: fitted.height
-        x: Geometry.clamp(Math.round(fitted.x), root.surfaceArea.x, root.surfaceArea.x + root.surfaceArea.width - width)
-        y: Geometry.clamp(Math.round(fitted.y), root.surfaceArea.y, root.surfaceArea.y + root.surfaceArea.height - height)
+        readonly property real bottomInset: root.controller.shell && root.controller.shell.bottomBarHeight !== undefined
+            ? root.controller.shell.bottomBarHeight : 18
+        property real wantedWidth: Math.min(preferredWidth, root.surfaceArea.width)
+        property real wantedHeight: Math.min(720, Math.max(220, preferredHeight), root.surfaceArea.height)
+        Behavior on wantedWidth { enabled: settingsHome.reveal > .999 && root.presented
+            NumberAnimation { duration: root.motion.geometryDuration; easing.type: root.motion.easeGeometry } }
+        Behavior on wantedHeight { enabled: settingsHome.reveal > .999 && root.presented
+            NumberAnimation { duration: root.motion.geometryDuration; easing.type: root.motion.easeGeometry } }
+        width: Math.min(root.surfaceArea.width, 140+(wantedWidth-140)*reveal)
+        height: Math.max(0,wantedHeight*reveal)
+        x: root.surfaceArea.x+(root.surfaceArea.width-width)/2
+        y: Math.min(root.surfaceArea.y+root.surfaceArea.height,parent.height-bottomInset)-height
+        presented: root.presented && root.settingsMode
+        motion: root.motion
         z: 40; visible: root.settingsMode
         config: root.config; controller: root.controller; editor: root.editor
         theme: root.theme; profileService: root.profileService
@@ -68,10 +76,10 @@ Item {
         return labels[String(type)] || String(type)
     }
 
-    opacity: presented ? 1 : 0
+    opacity: settingsMode ? 1 : (presented ? 1 : 0)
     visible: opacity > 0.001
     Behavior on opacity {
-        NumberAnimation { duration: root.motion.selection; easing.type: Easing.OutCubic }
+        NumberAnimation { duration: root.settingsMode ? 0 : root.motion.selection; easing.type: Easing.OutCubic }
     }
 
     function builtInEnabled(kind) {
@@ -267,249 +275,13 @@ Item {
         }
     }
 
-    Lock.GlassPanel {
-        id: layersPanel
-        visible: false
-        x: root.surfaceArea.x
-        y: Geometry.clamp(root.desktop ? 84 : 102, root.surfaceArea.y, root.surfaceArea.y + root.surfaceArea.height - height)
-        width: Math.min(252, root.surfaceArea.width)
-        height: Math.max(0, Math.min(520, parent.height - 190))
-        z: 28
-        radius: 26
-        nativeOptics: false
-        materialMode: "solid"
-        solidColor: "#202634"
-        materialOpacity: 0.98
-        surfaceColor: root.theme.surfaceRaised
-        borderColor: root.theme.borderStrong
-        shadowColor: root.theme.shadow
+    // Compatibility geometry handle; presentation is owned by SettingsHome.
+    Item { id: layersPanel; x: root.surfaceArea.x; y: root.surfaceArea.y; visible: false }
 
-        Column {
-            anchors.fill: parent
-            anchors.margins: 14
-            spacing: 9
-            Text {
-                text: "Elementos · " + (root.desktop ? "Desktop" : "Lockscreen")
-                color: root.theme.textPrimary
-                font.family: root.theme.bodyFont
-                font.pixelSize: 14
-                font.weight: Font.DemiBold
-            }
-            Text {
-                text: root.editor.editableLayers.length + " itens"
-                color: root.theme.textMuted
-                font.family: root.theme.bodyFont
-                font.pixelSize: 10
-            }
-            Flickable {
-                width: parent.width
-                height: layersPanel.height - 82
-                clip: true
-                contentWidth: width
-                contentHeight: layersColumn.height
-                boundsBehavior: Flickable.StopAtBounds
-                Column {
-                    id: layersColumn
-                    width: parent.width
-                    spacing: 5
-                    Repeater {
-                        model: root.editor.editableLayers
-                        Rectangle {
-                            id: layerRow
-                            required property var modelData
-                            width: layersColumn.width
-                            height: 44
-                            radius: 13
-                            color: String(modelData.id) === root.editor.selectedLayerId
-                                ? root.theme.accentMuted
-                                : (layerPointer.containsMouse
-                                    ? root.theme.surfaceHover : root.theme.surfaceSoft)
-                            border.width: 1
-                            border.color: String(modelData.id) === root.editor.selectedLayerId
-                                ? root.theme.accent : root.theme.borderSubtle
-                            Text {
-                                x: 11; anchors.verticalCenter: parent.verticalCenter
-                                text: modelData.sharedWidget ? "▦" : "◇"
-                                color: root.theme.accentSoft
-                                font.pixelSize: 14
-                            }
-                            Text {
-                                x: 34; width: parent.width - 92
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: String(modelData.name || modelData.type)
-                                color: modelData.visible
-                                    ? root.theme.textPrimary : root.theme.textMuted
-                                elide: Text.ElideRight
-                                font.family: root.theme.bodyFont
-                                font.pixelSize: 11
-                                font.weight: Font.Medium
-                            }
-                            Text {
-                                anchors.right: parent.right
-                                anchors.rightMargin: 31
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: modelData.locked ? "⌾" : ""
-                                color: root.theme.textMuted
-                                font.pixelSize: 11
-                            }
-                            Text {
-                                anchors.right: parent.right
-                                anchors.rightMargin: 10
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: modelData.visible ? "●" : "○"
-                                color: modelData.visible
-                                    ? root.theme.success : root.theme.textMuted
-                                font.pixelSize: 11
-                            }
-                            MouseArea {
-                                id: layerPointer
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                onClicked: function(mouse) {
-                                    if (mouse.button === Qt.RightButton)
-                                        root.editor.updateLayer(modelData.id,
-                                            { visible: !modelData.visible })
-                                    else
-                                        root.editor.select(modelData.id)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 
-    Lock.GlassPanel {
-        id: barPanel
-        visible: false
-        width: Math.min(560, root.surfaceArea.width)
-        height: Math.max(0, Math.min(620, parent.height - 170))
-        x: Math.max(root.surfaceArea.x, Math.min(root.surfaceArea.x + root.surfaceArea.width - width,
-            toolBar.x + (toolBar.width - width) / 2))
-        y: Geometry.clamp(toolBar.y - height - 12, root.surfaceArea.y, root.surfaceArea.y + root.surfaceArea.height - height)
-        z: 33
-        radius: 28
-        nativeOptics: false
-        materialMode: "solid"
-        solidColor: "#202634"
-        materialOpacity: 0.98
-        surfaceColor: root.theme.glass
-        borderColor: root.theme.border
-        shadowColor: root.theme.shadow
+    // Compatibility geometry handle; presentation is owned by SettingsHome.
+    Item { id: barPanel; x: root.surfaceArea.x; y: root.surfaceArea.y; visible: false }
 
-        Column {
-            anchors.fill: parent
-            anchors.margins: 16
-            spacing: 9
-
-            Text {
-                text: "Composição da barra deste perfil"
-                color: "white"
-                font.family: root.theme.bodyFont
-                font.pixelSize: 15
-                font.weight: Font.Bold
-            }
-            Text {
-                width: parent.width
-                text: "Esquerda e direita ficam presas às bordas; o centro nunca se une a elas."
-                wrapMode: Text.WordWrap
-                color: Qt.rgba(1, 1, 1, 0.62)
-                font.family: root.theme.bodyFont
-                font.pixelSize: 10
-            }
-
-            Flickable {
-                width: parent.width
-                height: barPanel.height - 142
-                clip: true
-                contentWidth: width
-                contentHeight: barRows.height
-                boundsBehavior: Flickable.StopAtBounds
-
-                Column {
-                    id: barRows
-                    width: parent.width
-                    spacing: 6
-
-                    Repeater {
-                        model: root.config.topbarLayout
-
-                        Rectangle {
-                            id: barRow
-                            required property var modelData
-                            width: barRows.width
-                            height: 50
-                            radius: 16
-                            color: Qt.rgba(1, 1, 1, 0.065)
-                            border.width: 1
-                            border.color: Qt.rgba(1, 1, 1, 0.13)
-
-                            Text {
-                                x: 12; width: 128; height: parent.height
-                                text: root.barLabel(barRow.modelData.type)
-                                color: barRow.modelData.enabled ? "white" : Qt.rgba(1, 1, 1, 0.42)
-                                elide: Text.ElideRight
-                                verticalAlignment: Text.AlignVCenter
-                                font.family: root.theme.bodyFont
-                                font.pixelSize: 10
-                                font.weight: Font.DemiBold
-                            }
-
-                            Row {
-                                anchors.right: parent.right
-                                anchors.rightMargin: 7
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 4
-                                ToolButton {
-                                    caption: "E"; compact: true
-                                    activeState: barRow.modelData.section === "left"
-                                    onTriggered: root.config.moveTopbarItemToSection(barRow.modelData.id, "left")
-                                }
-                                ToolButton {
-                                    caption: "C"; compact: true
-                                    activeState: barRow.modelData.section === "center"
-                                    onTriggered: root.config.moveTopbarItemToSection(barRow.modelData.id, "center")
-                                }
-                                ToolButton {
-                                    caption: "D"; compact: true
-                                    activeState: barRow.modelData.section === "right"
-                                    onTriggered: root.config.moveTopbarItemToSection(barRow.modelData.id, "right")
-                                }
-                                ToolButton {
-                                    glyph: "↑"; compact: true
-                                    onTriggered: root.config.moveTopbarItem(barRow.modelData.id, -1)
-                                }
-                                ToolButton {
-                                    glyph: "↓"; compact: true
-                                    onTriggered: root.config.moveTopbarItem(barRow.modelData.id, 1)
-                                }
-                                ToolButton {
-                                    caption: barRow.modelData.enabled ? "On" : "Off"
-                                    compact: true
-                                    activeState: barRow.modelData.enabled
-                                    onTriggered: root.config.setTopbarItemEnabled(
-                                        barRow.modelData.id, !barRow.modelData.enabled)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            Row {
-                spacing: 8
-                ToolButton { caption: "Restaurar padrão"; onTriggered: root.config.resetTopbarLayout() }
-                ToolButton {
-                    caption: "Salvar no perfil"
-                    enabled: root.profileService.activeProfileId.length > 0
-                    onTriggered: root.profileService.updateProfile(root.profileService.activeProfileId)
-                }
-            }
-        }
-    }
 
     Lock.GlassPanel {
         id: catalog
@@ -575,74 +347,9 @@ Item {
         }
     }
 
-    Lock.GlassPanel {
-        id: profilesPanel
-        visible: false
-        width: Math.min(330, root.surfaceArea.width)
-        height: Math.max(0, Math.min(470, parent.height - 170))
-        x: Math.max(root.surfaceArea.x, Math.min(root.surfaceArea.x + root.surfaceArea.width - width,
-            toolBar.x + 190))
-        y: Geometry.clamp(root.desktop ? toolBar.y - height - 12 : toolBar.y + toolBar.height + 12, root.surfaceArea.y, root.surfaceArea.y + root.surfaceArea.height - height)
-        z: 32
-        radius: 28
-        nativeOptics: false
-        materialMode: "solid"
-        solidColor: "#202634"
-        materialOpacity: 0.98
-        surfaceColor: root.theme.glass
-        borderColor: root.theme.border
-        shadowColor: root.theme.shadow
+    // Compatibility geometry handle; presentation is owned by SettingsHome.
+    Item { id: profilesPanel; x: root.surfaceArea.x; y: root.surfaceArea.y; visible: false }
 
-        Flickable {
-            anchors.fill: parent; anchors.margins: 16
-            contentWidth: width; contentHeight: profilesPanelContents.implicitHeight
-            clip: true; boundsBehavior: Flickable.StopAtBounds
-        Column {
-            id: profilesPanelContents
-            width: parent.width
-            spacing: 8
-            Text {
-                text: "Perfis e wallpaper"
-                color: "white"; font.family: root.theme.bodyFont
-                font.pixelSize: 15; font.weight: Font.Bold
-            }
-            ToolButton { caption: "Trocar wallpaper"; width: 298; onTriggered: root.controller.chooseWallpaper() }
-            Flow {
-                width: parent.width
-                spacing: 6
-                visible: root.desktop
-                ToolButton { caption: "Coluna"; onTriggered: root.editor.applyDesktopTemplate("side-column") }
-                ToolButton { caption: "Cantos"; onTriggered: root.editor.applyDesktopTemplate("split-corners") }
-                ToolButton { caption: "Periférico"; onTriggered: root.editor.applyDesktopTemplate("scattered") }
-                ToolButton { caption: "Galeria ↑"; onTriggered: root.editor.applyDesktopTemplate("gallery-top-right") }
-                ToolButton { caption: "Restaurar"; onTriggered: root.editor.restoreDesktopLayout() }
-                ToolButton { caption: "Próximo"; onTriggered: root.editor.advanceDesktopTemplate() }
-            }
-            ToolButton {
-                caption: "Salvar no perfil ativo"; width: 298
-                enabled: root.profileService.activeProfileId.length > 0
-                onTriggered: root.profileService.updateProfile(root.profileService.activeProfileId)
-            }
-            ToolButton { caption: "Importar .helixpack"; width: 298; onTriggered: root.controller.importPackage() }
-            ToolButton {
-                caption: "Exportar .helixpack"; width: 298
-                enabled: root.profileService.activeProfileId.length > 0
-                onTriggered: root.controller.exportPackage(root.profileService.activeProfileId)
-            }
-            Rectangle { width: parent.width; height: 1; color: Qt.rgba(1, 1, 1, 0.16) }
-            Repeater {
-                model: root.profileService.profiles
-                ToolButton {
-                    required property var modelData
-                    width: 298
-                    caption: String(modelData.name || modelData.id)
-                    activeState: String(modelData.id) === root.profileService.activeProfileId
-                    onTriggered: root.profileService.applyProfile(modelData.id, true)
-                }
-            }
-        }
-        }
-    }
 
     Lock.GlassPanel {
         id: inspector

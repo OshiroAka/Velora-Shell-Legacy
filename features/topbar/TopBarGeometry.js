@@ -16,8 +16,8 @@ function panel(width, height, barHeight, anchor, wantedWidth, wantedHeight, prog
 }
 
 function size(type) {
-    const sizes = { battery: [336, 240], clock: [344, 368], timer: [300, 154],
-        monitor: [372, 340], paint: [202, 66], wifi: [344, 330], caffeine: [300, 290], cat: [280, 164], usb: [416, 330],
+    const sizes = { battery: [360, 300], clock: [344, 368], timer: [300, 154],
+        monitor: [372, 398], paint: [202, 66], wifi: [344, 330], caffeine: [300, 290], cat: [280, 164], usb: [416, 330],
         thing: [390, 172], notes: [352, 368], search: [370, 360], controls: [300, 204] }
     return sizes[type] || [304, 180]
 }

@@ -26,6 +26,7 @@ Loader {
     Component {
         id: monitorPanel
         Components.VeloraMonitorSettings {
+            reducedMotion: !!root.theme.config && root.theme.config.reducedMotion
             ink: root.theme.textPrimary
             uiFont: root.theme.bodyFont
             surfaceColor: root.theme.wallpaperSurfaceTone
@@ -132,16 +133,29 @@ Loader {
                 value: root.systemStatus.hasBattery && root.systemStatus.battery.healthSupported ? Math.round(root.systemStatus.battery.healthPercentage) + "%" : ""
             }
             Rule {}
-            Detail { text: "PERFIL DE ENERGIA"; font.pixelSize: 10; font.letterSpacing: 0.8 }
             RowLayout {
                 Layout.fillWidth: true
+                spacing: 6
                 Repeater {
-                    model: [{ key: "power-saver", label: "Economia" }, { key: "balanced", label: "Equilibrado" }, { key: "performance", label: "Desempenho" }]
-                    BarAction {
+                    model: [
+                        { key: "power-saver", label: "Economia", detail: "Prioriza a duração da bateria" },
+                        { key: "balanced", label: "Equilibrado", detail: "Equilibra autonomia e velocidade" },
+                        { key: "performance", label: "Desempenho", detail: "Prioriza a velocidade; consome mais energia" }
+                    ]
+                    Components.VeloraSystemChoice {
                         required property var modelData
-                        Layout.fillWidth: true; theme: root.theme; text: modelData.label
+                        objectName: "energyChoice-" + modelData.key
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 92
+                        reducedMotion: !!root.theme.config && root.theme.config.reducedMotion
+                        choice: modelData.key
+                        text: modelData.label
+                        explanation: modelData.detail
+                        ink: root.theme.textPrimary
+                        accent: root.theme.textPrimary
+                        uiFont: root.theme.bodyFont
                         enabled: root.system.power.available && !root.system.powerBusy && root.system.power.profiles.indexOf(modelData.key) >= 0
-                        highlighted: root.system.power.current === modelData.key
+                        selected: root.system.power.current === modelData.key
                         onClicked: root.system.setProfile(modelData.key)
                     }
                 }
@@ -164,9 +178,24 @@ Loader {
                     }
                 }
                 Switch {
+                    id: fanSwitch
+                    implicitWidth: 40; implicitHeight: 36
+                    Accessible.name: "Fan+ · Resfriamento máximo"
                     checked: root.fanPlus.enabled || (root.fanPlus.state === "error" && root.fanPlus.lastConfirmedActive)
                     enabled: root.fanPlus.supported && !root.fanPlus.busy
                     onToggled: root.fanPlus.toggle()
+                    indicator: Rectangle {
+                        x: 2; y: 8; width: 36; height: 20; radius: 10
+                        color: root.theme.withAlpha(root.theme.textPrimary, fanSwitch.checked ? .4 : .18)
+                        border.width: fanSwitch.activeFocus ? 1 : 0
+                        border.color: root.theme.textPrimary
+                        opacity: fanSwitch.enabled ? 1 : .4
+                        Rectangle {
+                            x: fanSwitch.checked ? 19 : 3; y: 3
+                            width: 14; height: 14; radius: 7
+                            color: root.theme.textPrimary
+                        }
+                    }
                 }
             }
             Detail { Layout.fillWidth: true; visible: root.fanPlus.state === "error"; text: root.fanPlus.error; color: root.theme.warning }

@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Controls
 import Qt5Compat.GraphicalEffects
 
 Rectangle {
@@ -7,13 +8,17 @@ Rectangle {
 
     property var theme: null
     property var controller: null
+    property bool embedded: false
+    property var palette: null
+    property string category: ""
+    property bool resetArmed: false
+    property string mediaSection: "playback"
     property int activeTab: 1
     property int selectedLyricsBlock: 0
-    property bool appliedFlash: false
 
-    readonly property color accent: theme ? theme.accentPrimary : "#3f7cff"
-    readonly property color primaryText: theme ? theme.textPrimary : "#f5f7ff"
-    readonly property color secondaryText: theme ? theme.textSecondary : "#8f99b2"
+    readonly property color accent: palette ? palette.accent : theme ? theme.accentPrimary : "#3f7cff"
+    readonly property color primaryText: palette ? palette.textPrimary : theme ? theme.textPrimary : "#f5f7ff"
+    readonly property color secondaryText: palette ? palette.textSecondary : theme ? theme.textSecondary : "#8f99b2"
     readonly property color panelColor: theme
         ? theme.withAlpha(theme.surfacePopup, theme.themeMode === "dark" ? 0.90 : 0.86)
         : Qt.rgba(0.025, 0.045, 0.10, 0.94)
@@ -26,13 +31,14 @@ Rectangle {
     readonly property color lineColor: theme
         ? theme.withAlpha(theme.borderSoft, theme.themeMode === "dark" ? 0.13 : 0.30)
         : Qt.rgba(0.35, 0.50, 0.82, 0.22)
-    readonly property string uiFont: theme ? theme.uiFont : "Noto Sans"
+    readonly property string uiFont: palette ? palette.bodyFont : theme ? theme.uiFont : "Noto Sans"
     readonly property var tabs: ["Geral", "Barra", "Menu", "Wallpaper", "Moldura", "Lyrics", "Velyrics"]
     readonly property bool externalSurface: controller ? controller.externalSurface === true : false
 
+    implicitHeight: embedded ? (pageLoader.item ? pageLoader.item.implicitHeight : 0) + 50 : 640
     radius: 24
-    color: externalSurface ? "transparent" : panelColor
-    border.width: externalSurface ? 0 : 1
+    color: externalSurface || embedded ? "transparent" : panelColor
+    border.width: externalSurface || embedded ? 0 : 1
     border.color: theme ? theme.withAlpha(theme.accentPrimary, 0.25) : Qt.rgba(0.20, 0.42, 0.85, 0.34)
     clip: true
     antialiasing: true
@@ -41,6 +47,14 @@ Rectangle {
         if (!theme)
             return
 
+        if (embedded && category === "appearance") {
+            if (controller) controller.selectTheme("default")
+            return
+        }
+        if (embedded && category === "language") {
+            theme.setLanguage("pt-BR")
+            return
+        }
         if (activeTab === 0) {
             if (controller)
                 controller.selectTheme("default")
@@ -59,7 +73,7 @@ Rectangle {
             controller.wallpaperStaticDelay = 0.12
             controller.saveWallpaperTransition()
             controller.setWallpaperLiveTransition("shader")
-            controller.setTerminalStrongColors(false)
+            if (!embedded) controller.setTerminalStrongColors(false)
             theme.setWallpaperSelectorPosition("center")
             theme.setWallpaperSelectorBlur(0.55)
         } else if (activeTab === 4) {
@@ -242,18 +256,9 @@ Rectangle {
         )
     }
 
-    function markApplied() {
-        if (activeTab === 3 && controller)
-            controller.saveWallpaperTransition()
-        appliedFlash = true
-        appliedTimer.restart()
-    }
 
-    Timer {
-        id: appliedTimer
-        interval: 1300
-        onTriggered: ui.appliedFlash = false
-    }
+
+
 
     Keys.onEscapePressed: if (controller) controller.closeRequested()
 
@@ -418,6 +423,10 @@ Rectangle {
         property bool active: false
         property bool compact: false
         signal clicked()
+        activeFocusOnTab: enabled
+        Accessible.role: Accessible.Button; Accessible.name: label
+        Keys.onReturnPressed: clicked()
+        Keys.onSpacePressed: clicked()
 
         implicitHeight: compact ? 34 : 38
         radius: 9
@@ -462,8 +471,14 @@ Rectangle {
         property string hint: ""
         property bool checked: false
         signal toggled()
+        activeFocusOnTab: enabled
+        Accessible.role: Accessible.CheckBox; Accessible.name: label; Accessible.checked: checked
+        Accessible.description: hint
+        Accessible.onPressAction: toggled()
+        Keys.onSpacePressed: toggled()
+        Keys.onReturnPressed: toggled()
 
-        implicitHeight: 54
+        implicitHeight: ui.embedded ? 36 : 54
 
         Column {
             anchors.left: parent.left
@@ -484,6 +499,7 @@ Rectangle {
 
             Text {
                 width: parent.width
+                visible: !ui.embedded && text.length > 0
                 text: toggleRow.hint
                 color: ui.secondaryText
                 font.family: ui.uiFont
@@ -494,7 +510,7 @@ Rectangle {
 
         Rectangle {
             id: switchTrack
-            anchors.right: parent.right
+            x: Math.min(parent.width-width, 360)
             anchors.verticalCenter: parent.verticalCenter
             width: 42
             height: 24
@@ -511,123 +527,39 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 color: toggleRow.checked ? "#ffffff" : ui.secondaryText
 
-                Behavior on x { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+                Behavior on x { NumberAnimation { duration: ui.palette && ui.palette.config && ui.palette.config.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
             }
         }
 
+        ToolTip.visible: ui.embedded && (togglePointer.containsMouse || toggleRow.activeFocus) && hint.length > 0
+        ToolTip.delay: 600
+        ToolTip.text: hint
         MouseArea {
+            id: togglePointer
+            hoverEnabled: true
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
             onClicked: toggleRow.toggled()
         }
     }
 
-    component SettingSlider: Item {
-        id: settingSlider
-
-        property string label: ""
-        property string hint: ""
-        property string valueText: ""
-        property real minimum: 0
-        property real maximum: 1
-        property real value: 0
-        property bool dragging: false
-        property real dragValue: value
+    component SettingSlider: VeloraSettingsSlider {
+        theme: ui.palette || sliderPalette
         signal valueRequested(real newValue)
         signal valueCommitted(real newValue)
-
-        readonly property real displayValue: dragging ? dragValue : value
-        readonly property real normalized: Math.max(0, Math.min(1, (displayValue - minimum) / Math.max(0.0001, maximum - minimum)))
-        implicitHeight: hint.length > 0 ? 70 : 58
-
-        Text {
-            anchors.left: parent.left
-            anchors.top: parent.top
-            text: settingSlider.label
-            color: ui.primaryText
-            font.family: ui.uiFont
-            font.pixelSize: 12
-            font.weight: Font.DemiBold
-        }
-
-        Text {
-            anchors.right: parent.right
-            anchors.top: parent.top
-            text: settingSlider.valueText
-            color: ui.secondaryText
-            font.family: ui.uiFont
-            font.pixelSize: 10
-        }
-
-        Text {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.topMargin: 20
-            visible: settingSlider.hint.length > 0
-            text: settingSlider.hint
-            color: ui.secondaryText
-            font.family: ui.uiFont
-            font.pixelSize: 10
-            elide: Text.ElideRight
-        }
-
-        Rectangle {
-            id: sliderTrack
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.rightMargin: 42
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: 9
-            height: 4
-            radius: 2
-            color: ui.inputColor
-
-            Rectangle {
-                width: Math.max(4, parent.width * settingSlider.normalized)
-                height: parent.height
-                radius: 2
-                color: ui.accent
-            }
-
-            Rectangle {
-                x: Math.max(0, Math.min(parent.width - width, parent.width * settingSlider.normalized - width / 2))
-                anchors.verticalCenter: parent.verticalCenter
-                width: 14
-                height: 14
-                radius: 7
-                color: ui.primaryText
-                border.width: 2
-                border.color: ui.accent
-            }
-
-            MouseArea {
-                anchors.fill: parent
-                anchors.margins: -8
-                cursorShape: Qt.PointingHandCursor
-
-                function updateValue(mouseX) {
-                    const localX = Math.max(0, Math.min(sliderTrack.width, mouseX + 8))
-                    settingSlider.dragValue = settingSlider.minimum + (localX / sliderTrack.width) * (settingSlider.maximum - settingSlider.minimum)
-                    settingSlider.valueRequested(settingSlider.dragValue)
-                }
-
-                onPressed: function(mouse) {
-                    settingSlider.dragging = true
-                    settingSlider.dragValue = settingSlider.value
-                    updateValue(mouse.x)
-                }
-                onPositionChanged: function(mouse) { if (pressed) updateValue(mouse.x) }
-                onReleased: function(mouse) {
-                    updateValue(mouse.x)
-                    const finalValue = settingSlider.dragValue
-                    settingSlider.dragging = false
-                    settingSlider.valueCommitted(finalValue)
-                }
-                onCanceled: settingSlider.dragging = false
-            }
-        }
+        onEdited: value => valueRequested(value)
+        onFinalized: value => valueCommitted(value)
     }
+    QtObject {
+        id: sliderPalette
+        readonly property color textPrimary: ui.primaryText
+        readonly property color textSecondary: ui.secondaryText
+        readonly property color accent: ui.accent
+        readonly property color borderStrong: ui.lineColor
+        readonly property color borderSubtle: ui.lineColor
+        readonly property string bodyFont: ui.uiFont
+    }
+
 
     component TextInputRow: Item {
         id: inputRow
@@ -711,7 +643,8 @@ Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        height: 76
+        height: ui.embedded ? 0 : 76
+        visible: !ui.embedded
 
         UiIcon {
             anchors.left: parent.left
@@ -755,7 +688,8 @@ Rectangle {
         anchors.top: header.bottom
         anchors.leftMargin: 18
         anchors.rightMargin: 18
-        height: 43
+        height: ui.embedded ? 0 : 43
+        visible: !ui.embedded
         radius: 10
         color: ui.inputColor
         border.width: 1
@@ -806,27 +740,40 @@ Rectangle {
         id: scroller
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.top: tabBar.bottom
+        anchors.top: ui.embedded ? parent.top : tabBar.bottom
         anchors.bottom: footer.top
-        anchors.leftMargin: 18
-        anchors.rightMargin: 12
-        anchors.topMargin: 12
-        anchors.bottomMargin: 8
+        anchors.leftMargin: ui.embedded ? 0 : 18
+        anchors.rightMargin: ui.embedded ? 0 : 12
+        anchors.topMargin: ui.embedded ? 0 : 12
+        anchors.bottomMargin: ui.embedded ? 0 : 8
         clip: true
         contentWidth: width
         contentHeight: pageLoader.item ? pageLoader.item.implicitHeight + 8 : 0
         boundsBehavior: Flickable.StopAtBounds
         flickDeceleration: 2600
+        interactive: !ui.embedded
 
         Loader {
             id: pageLoader
-            width: scroller.width - 6
-            sourceComponent: ui.activeTab === 0 ? generalPage
+            width: scroller.width - (ui.embedded ? 0 : 6)
+            sourceComponent: ui.embedded
+                ? (ui.category === "appearance" ? themePage
+                : ui.category === "language" ? languagePage
+                : ui.category === "system" ? systemPage
+                : ui.category === "bar" ? sidebarPage
+                : ui.category === "wallpapers" ? wallpaperPage
+                : ui.category === "desktop" ? framePage
+                : ui.category === "media" ? (ui.mediaSection === "position" ? lyricsPosition
+                    : ui.mediaSection === "style" ? lyricsStyle
+                    : ui.mediaSection === "material" ? lyricsMaterial
+                    : ui.mediaSection === "velyrics" ? velyricsPage : lyricsPlayback)
+                : null)
+                : ui.activeTab === 0 ? generalPage
                 : (ui.activeTab === 1 ? barPage
                 : (ui.activeTab === 2 ? menuPage
                 : (ui.activeTab === 3 ? wallpaperPage
                 : (ui.activeTab === 4 ? framePage
-                : (ui.activeTab === 5 ? lyricsPage : velyricsPage)))))
+                : (ui.activeTab === 5 ? lyricsPlayback : velyricsPage)))))
         }
 
         Rectangle {
@@ -842,74 +789,30 @@ Rectangle {
 
     Item {
         id: footer
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        height: 70
-
-        Rectangle {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            height: 1
-            color: ui.lineColor
-        }
-
-        ChoiceButton {
-            anchors.left: parent.left
-            anchors.leftMargin: 18
-            anchors.verticalCenter: parent.verticalCenter
-            width: 114
-            label: "Redefinir"
-            iconName: "refresh"
-            onClicked: ui.resetCurrentPage()
-        }
-
-        Rectangle {
-            id: applyButton
-            anchors.right: parent.right
-            anchors.rightMargin: 18
-            anchors.verticalCenter: parent.verticalCenter
-            width: 154
-            height: 42
-            radius: 9
-            color: ui.accent
-
-            Row {
-                anchors.centerIn: parent
-                spacing: 7
-
-                UiIcon {
-                    width: 17
-                    height: 17
-                    iconName: ui.appliedFlash ? "check" : "check"
-                    lineColor: "#ffffff"
-                }
-
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: ui.appliedFlash ? "Aplicado" : "Aplicar alterações"
-                    color: "#ffffff"
-                    font.family: ui.uiFont
-                    font.pixelSize: 11
-                    font.weight: Font.DemiBold
-                }
-            }
-
-            MouseArea {
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: ui.markApplied()
-            }
-        }
+        anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+        height: ui.embedded && ui.category === "system" ? 0 : 50
+        visible: height > 0
+        ChoiceButton { x: 18; anchors.verticalCenter: parent.verticalCenter; width: 114
+            objectName: "legacy.reset"
+            label: ui.resetArmed ? "Confirmar" : "Redefinir"; onClicked: {
+                if (!ui.resetArmed) { ui.resetArmed = true; return }
+                const tabs = {appearance:0,language:0,bar:1,wallpapers:3,desktop:4,media:ui.mediaSection === "velyrics" ? 6 : 5}
+                if (ui.embedded) ui.activeTab = tabs[ui.category] === undefined ? 0 : tabs[ui.category]
+                ui.resetCurrentPage(); ui.resetArmed = false
+            } }
+        Text { anchors.right: parent.right; anchors.rightMargin: 18; anchors.verticalCenter: parent.verticalCenter
+            visible: !ui.embedded
+            text: ui.controller ? ui.controller.noticeText || "Salvamento automático" : ""
+            color: ui.secondaryText; font.pixelSize: 11; font.family: ui.uiFont }
     }
 
-    Component {
-        id: generalPage
 
-        Column {
-            spacing: 12
-
+    Component { id: generalPage; Column { spacing: 12
+        Loader { width: parent.width; sourceComponent: themePage }
+        Loader { width: parent.width; sourceComponent: languagePage }
+        Loader { width: parent.width; sourceComponent: powerPage }
+    } }
+    Component { id: themePage; Column { objectName: "legacy.theme"; width: parent ? parent.width : 400; spacing: 12
             SectionTitle { label: "APARÊNCIA" }
 
             Text {
@@ -929,7 +832,7 @@ Rectangle {
 
                     ChoiceButton {
                         required property var modelData
-                        width: (parent.width - 7) / 2
+                        width: Math.min(220, (parent.width - 7) / 2)
                         label: modelData.title
                         active: ui.theme && ui.theme.themeId === modelData.id
                         onClicked: if (ui.controller) ui.controller.selectTheme(modelData.id)
@@ -937,7 +840,11 @@ Rectangle {
                 }
             }
 
-            Divider { width: parent.width }
+
+    } }
+
+    Component { id: languagePage; Column { objectName: "legacy.language"; width: parent ? parent.width : 400; spacing: 12
+
             SectionTitle { label: "IDIOMA" }
 
             Flow {
@@ -949,7 +856,7 @@ Rectangle {
 
                     ChoiceButton {
                         required property var modelData
-                        width: (parent.width - 14) / 3
+                        width: Math.min(180, (parent.width - 14) / 3)
                         label: modelData.shortLabel
                         active: ui.theme && ui.theme.language === modelData.id
                         onClicked: if (ui.controller) ui.controller.selectLanguage(modelData.id)
@@ -957,7 +864,11 @@ Rectangle {
                 }
             }
 
-            Divider { width: parent.width }
+
+    } }
+
+    Component { id: powerPage; Column { width: parent ? parent.width : 400; spacing: 12
+
             SectionTitle { label: "ENERGIA" }
 
             Row {
@@ -965,7 +876,7 @@ Rectangle {
                 spacing: 7
 
                 ChoiceButton {
-                    width: (parent.width - 7) / 2
+                    width: Math.min(220, (parent.width - 7) / 2)
                     label: "Equilibrado"
                     iconName: "battery"
                     active: ui.controller && ui.controller.powerProfile === "balanced"
@@ -973,15 +884,15 @@ Rectangle {
                 }
 
                 ChoiceButton {
-                    width: (parent.width - 7) / 2
+                    width: Math.min(220, (parent.width - 7) / 2)
                     label: "Desempenho"
                     iconName: "sun"
                     active: ui.controller && ui.controller.powerProfile === "performance"
                     onClicked: if (ui.controller) ui.controller.setPowerProfile("performance")
                 }
             }
-        }
-    }
+    } }
+
 
     Component {
         id: barPage
@@ -994,7 +905,7 @@ Rectangle {
             SettingSlider {
                 width: parent.width
                 label: "Tamanho dos ícones"
-                hint: "Ajuste o tamanho dos ícones na barra"
+                hint: "O layout atual usa largura fixa; o valor antigo é preservado."
                 minimum: 32
                 maximum: 56
                 value: ui.theme ? ui.theme.barIconSize : 48
@@ -1005,6 +916,7 @@ Rectangle {
             }
 
             SettingSlider {
+                enabled: false
                 width: parent.width
                 label: "Largura da barra"
                 hint: "Redimensiona barra, relógio e área reservada"
@@ -1155,7 +1067,7 @@ Rectangle {
             ToggleRow {
                 width: parent.width
                 label: "Mostrar rótulos"
-                hint: "Exibe nomes abaixo das seções"
+                hint: "Disponível apenas no layout antigo da barra superior."
                 checked: ui.theme ? ui.theme.barLabelsVisible : true
                 onToggled: if (ui.theme) ui.theme.setBarLabelsVisible(!ui.theme.barLabelsVisible)
             }
@@ -1211,6 +1123,7 @@ Rectangle {
 
                 ChoiceButton {
                     id: blurChoice
+                    objectName: "legacy.bar-blur"
                     width: 148
                     label: ui.theme && ui.theme.barBlurEnabled ? "Desfoque (Blur)" : "Sólido"
                     active: ui.theme ? ui.theme.barBlurEnabled : true
@@ -1224,6 +1137,7 @@ Rectangle {
         id: menuPage
 
         Column {
+            objectName: "legacy.menu-position"
             spacing: 12
 
             SectionTitle { label: "CENTRAL DE CONTROLE" }
@@ -1403,7 +1317,7 @@ Rectangle {
                 spacing: 7
 
                 ChoiceButton {
-                    width: (parent.width - 7) / 2
+                    width: Math.min(220, (parent.width - 7) / 2)
                     label: "Centro"
                     iconName: "wallpaper"
                     active: ui.theme && ui.theme.wallpaperSelectorPosition === "center"
@@ -1411,7 +1325,7 @@ Rectangle {
                 }
 
                 ChoiceButton {
-                    width: (parent.width - 7) / 2
+                    width: Math.min(220, (parent.width - 7) / 2)
                     label: "Inferior (clássico)"
                     iconName: "box"
                     active: ui.theme && ui.theme.wallpaperSelectorPosition === "bottom"
@@ -1431,14 +1345,16 @@ Rectangle {
             }
 
             ChoiceButton {
+                visible: !ui.embedded
+                objectName: "legacy.selector-glass"
                 width: parent.width
                 label: active ? "Vidro do seletor ligado" : "Vidro do seletor desligado"
-                active: !!ui.controller && ui.controller.composition.wallpaperSelectorGlassEnabled
-                onClicked: if (ui.controller) ui.controller.composition.setWallpaperSelectorGlass(!active)
+                active: !!ui.controller && ui.controller.wallpaperSelectorGlassEnabled
+                onClicked: if (ui.controller) ui.controller.setWallpaperSelectorGlass(!active)
             }
 
             Divider { width: parent.width }
-            SectionTitle { label: "TRANSIÇÃO" }
+            SectionTitle { objectName: "wallpaper.transition"; label: "TRANSIÇÃO" }
 
             Text {
                 text: "Animação ao trocar o wallpaper"
@@ -1457,7 +1373,7 @@ Rectangle {
 
                     ChoiceButton {
                         required property var modelData
-                        width: (parent.width - 7) / 2
+                        width: Math.min(220, (parent.width - 7) / 2)
                         label: modelData.label
                         active: ui.controller && ui.controller.wallpaperTransition === modelData.id
                         onClicked: if (ui.controller) ui.controller.setWallpaperTransition(modelData.id)
@@ -1478,14 +1394,14 @@ Rectangle {
                 spacing: 7
 
                 ChoiceButton {
-                    width: (parent.width - 7) / 2
+                    width: Math.min(220, (parent.width - 7) / 2)
                     label: "Shaders"
                     active: ui.controller && ui.controller.wallpaperLiveTransition === "shader"
                     onClicked: if (ui.controller) ui.controller.setWallpaperLiveTransition("shader")
                 }
 
                 ChoiceButton {
-                    width: (parent.width - 7) / 2
+                    width: Math.min(220, (parent.width - 7) / 2)
                     label: "Nativa do awww"
                     active: ui.controller && ui.controller.wallpaperLiveTransition === "native"
                     onClicked: if (ui.controller) ui.controller.setWallpaperLiveTransition("native")
@@ -1503,15 +1419,7 @@ Rectangle {
                 wrapMode: Text.WordWrap
             }
 
-            ToggleRow {
-                width: parent.width
-                label: "Cores de terminal fortes"
-                hint: ui.controller && ui.controller.terminalStrongColors
-                    ? "Fundo escuro e contrastado, ainda combinado ao wallpaper"
-                    : "Usa a cor normal extraída do wallpaper"
-                checked: ui.controller ? ui.controller.terminalStrongColors : false
-                onToggled: if (ui.controller) ui.controller.setTerminalStrongColors(!ui.controller.terminalStrongColors)
-            }
+
 
             SettingSlider {
                 width: parent.width
@@ -1601,6 +1509,7 @@ Rectangle {
             }
 
             ToggleRow {
+                enabled: false
                 width: parent.width
                 label: "Desfoque da moldura"
                 hint: "Aplica blur ao fundo dos painéis"
@@ -1638,7 +1547,7 @@ Rectangle {
                 spacing: 7
 
                 ChoiceButton {
-                    width: (parent.width - 7) / 2
+                    width: Math.min(220, (parent.width - 7) / 2)
                     label: "Wave"
                     iconName: "volume"
                     active: ui.theme && ui.theme.visualizerMode === "wave"
@@ -1646,7 +1555,7 @@ Rectangle {
                 }
 
                 ChoiceButton {
-                    width: (parent.width - 7) / 2
+                    width: Math.min(220, (parent.width - 7) / 2)
                     label: "Pixels"
                     iconName: "box"
                     active: ui.theme && ui.theme.visualizerMode === "pixels"
@@ -1667,12 +1576,8 @@ Rectangle {
         }
     }
 
-    Component {
-        id: lyricsPage
 
-        Column {
-            spacing: 8
-
+    Component { id: lyricsPlayback; Column { width: parent ? parent.width : 400; spacing: 12
             SectionTitle { label: "LYRICS NO WALLPAPER" }
 
             ToggleRow {
@@ -1684,6 +1589,7 @@ Rectangle {
             }
 
             ToggleRow {
+                enabled: false
                 width: parent.width
                 label: "Modo cinemático"
                 hint: "Na topbar, troca frases com slide e recuo da anterior"
@@ -1756,6 +1662,244 @@ Rectangle {
             }
 
             Divider { width: parent.width }
+            SectionTitle { label: "EXIBIÇÃO" }
+
+            Flow {
+                width: parent.width
+                spacing: 7
+
+                Repeater {
+                    model: [
+                        { id: "progressive", label: "Progressivo" },
+                        { id: "line", label: "Linha" },
+                        { id: "current", label: "Atual" }
+                    ]
+
+                    ChoiceButton {
+                        required property var modelData
+                        width: Math.min(180, (parent.width - 14) / 3)
+                        compact: true
+                        label: modelData.label
+                        active: ui.theme && ui.theme.lyricsRevealMode === modelData.id
+                        onClicked: ui.updateLyrics({ revealMode: modelData.id })
+                    }
+                }
+            }
+
+            SettingSlider {
+                width: parent.width
+                label: "Sincronia"
+                hint: "Use negativo para atrasar, positivo para adiantar"
+                minimum: -3000
+                maximum: 3000
+                value: ui.theme ? ui.theme.lyricsSyncOffsetMs : 460
+                valueText: (value > 0 ? "+" : "") + Math.round(value) + "ms"
+                onValueRequested: function(newValue) { ui.updateLyrics({ syncOffsetMs: newValue }) }
+            }
+
+            Divider { width: parent.width }
+            SectionTitle { label: "LAYOUT" }
+
+            Flow {
+                width: parent.width
+                spacing: 7
+
+                Repeater {
+                    model: [
+                        { id: "simple", label: "Simples" },
+                        { id: "vertical", label: "Vertical" },
+                        { id: "cascade", label: "Cascata" },
+                        { id: "centered", label: "Centro" },
+                        { id: "two", label: "Dois lados" },
+                        { id: "four", label: "4 lyrics" }
+                    ]
+
+                    ChoiceButton {
+                        required property var modelData
+                        width: Math.min(220, (parent.width - 7) / 2)
+                        compact: true
+                        label: modelData.label
+                        active: ui.theme && ui.theme.lyricsLayoutMode === modelData.id
+                        onClicked: ui.selectLyricsLayout(modelData.id)
+                    }
+                }
+            }
+
+            Column {
+                width: parent.width
+                visible: ui.theme && (ui.theme.lyricsLayoutMode === "two" || ui.theme.lyricsLayoutMode === "four")
+                height: visible ? implicitHeight : 0
+                spacing: 8
+
+                Divider { width: parent.width }
+                SectionTitle { label: "BLOCO" }
+
+                Flow {
+                    width: parent.width
+                    spacing: 7
+
+                    Repeater {
+                        model: ui.lyricsBlockCount()
+
+                        ChoiceButton {
+                            required property int index
+                            width: ui.lyricsBlockCount() > 2 ? (parent.width - 7) / 2 : (parent.width - 7) / 2
+                            compact: true
+                            label: "Bloco " + (index + 1)
+                            active: ui.selectedLyricsBlock === index
+                            onClicked: ui.selectedLyricsBlock = index
+                        }
+                    }
+                }
+
+                SettingSlider {
+                    width: parent.width
+                    label: "Bloco X"
+                    hint: "Posição horizontal do bloco selecionado"
+                    minimum: 0
+                    maximum: 100
+                    value: ui.selectedLyricsBlockX()
+                    valueText: Math.round(value) + "%"
+                    onValueRequested: function(newValue) { ui.updateSelectedLyricsBlockPosition("x", newValue) }
+                }
+
+                SettingSlider {
+                    width: parent.width
+                    label: "Bloco Y"
+                    hint: "Posição vertical do bloco selecionado"
+                    minimum: 0
+                    maximum: 100
+                    value: ui.selectedLyricsBlockY()
+                    valueText: Math.round(value) + "%"
+                    onValueRequested: function(newValue) { ui.updateSelectedLyricsBlockPosition("y", newValue) }
+                }
+
+                Flow {
+                    width: parent.width
+                    spacing: 7
+
+                    Repeater {
+                        model: [
+                            { id: "inherit", label: "Cor geral" },
+                            { id: "pywal", label: "Pywal" },
+                            { id: "palette", label: "Paleta" },
+                            { id: "manual", label: "Manual" }
+                        ]
+
+                        ChoiceButton {
+                            required property var modelData
+                            width: Math.min(220, (parent.width - 7) / 2)
+                            compact: true
+                            label: modelData.label
+                            active: ui.theme && ui.theme.lyricsBlockColorMode(ui.selectedLyricsBlock) === modelData.id
+                            onClicked: ui.updateSelectedLyricsBlockStyle({ colorMode: modelData.id })
+                        }
+                    }
+                }
+
+                TextInputRow {
+                    width: parent.width
+                    visible: ui.theme && ui.theme.lyricsBlockColorMode(ui.selectedLyricsBlock) === "manual"
+                    height: visible ? implicitHeight : 0
+                    label: "Cor do bloco"
+                    hint: "Hexadecimal do bloco selecionado"
+                    value: ui.theme ? ui.theme.lyricsBlockManualColor(ui.selectedLyricsBlock) : "#f5f7ff"
+                    onValueSubmitted: function(newValue) { ui.updateSelectedLyricsBlockStyle({ colorMode: "manual", manualColor: newValue }) }
+                }
+
+                Flow {
+                    width: parent.width
+                    spacing: 7
+
+                    Repeater {
+                        model: [
+                            { id: "inherit", label: "Glow geral" },
+                            { id: "on", label: "Glow ON" },
+                            { id: "off", label: "Glow OFF" }
+                        ]
+
+                        ChoiceButton {
+                            required property var modelData
+                            width: Math.min(180, (parent.width - 14) / 3)
+                            compact: true
+                            label: modelData.label
+                            active: ui.theme && ui.theme.lyricsBlockGlowMode(ui.selectedLyricsBlock) === modelData.id
+                            onClicked: ui.updateSelectedLyricsBlockStyle({ glowMode: modelData.id })
+                        }
+                    }
+                }
+
+                SettingSlider {
+                    width: parent.width
+                    label: "Glow do bloco"
+                    hint: "Intensidade individual do brilho"
+                    minimum: 0
+                    maximum: 1
+                    value: ui.theme ? ui.theme.lyricsBlockGlowIntensity(ui.selectedLyricsBlock) : 0.45
+                    valueText: Math.round(value * 100) + "%"
+                    onValueRequested: function(newValue) { ui.updateSelectedLyricsBlockStyle({ glowIntensity: newValue }) }
+                }
+            }
+
+            Divider { width: parent.width }
+            SectionTitle { label: "ANIMAÇÃO" }
+
+            ToggleRow {
+                width: parent.width
+                label: "Flutuação"
+                hint: "Movimento suave nas palavras"
+                checked: ui.theme ? ui.theme.lyricsFloatEnabled : true
+                onToggled: ui.updateLyrics({ floatEnabled: !(ui.theme && ui.theme.lyricsFloatEnabled) })
+            }
+
+            SettingSlider {
+                width: parent.width
+                visible: ui.theme ? ui.theme.lyricsFloatEnabled : true
+                height: visible ? implicitHeight : 0
+                label: "Força da flutuação"
+                hint: "Deslocamento suave em pixels"
+                minimum: 0
+                maximum: 24
+                value: ui.theme ? ui.theme.lyricsFloatIntensity : 5
+                valueText: Math.round(value) + "px"
+                onValueRequested: function(newValue) { ui.updateLyrics({ floatIntensity: newValue }) }
+            }
+
+            Flow {
+                width: parent.width
+                spacing: 7
+
+                Repeater {
+                    model: [
+                        { id: "instant", label: "Instantâneo" },
+                        { id: "fade", label: "Fade" },
+                        { id: "slide", label: "Slide" }
+                    ]
+
+                    ChoiceButton {
+                        required property var modelData
+                        width: Math.min(180, (parent.width - 14) / 3)
+                        compact: true
+                        label: modelData.label
+                        active: ui.theme && ui.theme.lyricsAnimationMode === modelData.id
+                        onClicked: ui.updateLyrics({ animation: modelData.id })
+                    }
+                }
+            }
+
+            Text {
+                width: parent.width
+                text: ui.theme && ui.theme.lyricsAnimationMode === "instant"
+                    ? "Instantâneo troca as palavras sem fade nem espera."
+                    : "Fade e Slide ficam disponíveis para testes futuros."
+                color: ui.secondaryText
+                font.family: ui.uiFont
+                font.pixelSize: 10
+                wrapMode: Text.WordWrap
+            }
+    } }
+
+    Component { id: lyricsPosition; Column { width: parent ? parent.width : 400; spacing: 12
             SectionTitle { label: "POSIÇÃO" }
 
             SettingSlider {
@@ -1861,6 +2005,10 @@ Rectangle {
             }
 
             Divider { width: parent.width }
+
+    } }
+
+    Component { id: lyricsStyle; Column { width: parent ? parent.width : 400; spacing: 12
             SectionTitle { label: "COR" }
 
             Flow {
@@ -1868,21 +2016,21 @@ Rectangle {
                 spacing: 7
 
                 ChoiceButton {
-                    width: (parent.width - 14) / 3
+                    width: Math.min(180, (parent.width - 14) / 3)
                     label: "Pywal"
                     active: ui.theme && ui.theme.lyricsColorMode === "pywal"
                     onClicked: ui.updateLyrics({ colorMode: "pywal" })
                 }
 
                 ChoiceButton {
-                    width: (parent.width - 14) / 3
+                    width: Math.min(180, (parent.width - 14) / 3)
                     label: "Paleta"
                     active: ui.theme && ui.theme.lyricsColorMode === "palette"
                     onClicked: ui.updateLyrics({ colorMode: "palette" })
                 }
 
                 ChoiceButton {
-                    width: (parent.width - 14) / 3
+                    width: Math.min(180, (parent.width - 14) / 3)
                     label: "Manual"
                     active: ui.theme && ui.theme.lyricsColorMode === "manual"
                     onClicked: ui.updateLyrics({ colorMode: "manual" })
@@ -1973,6 +2121,10 @@ Rectangle {
             }
 
             Divider { width: parent.width }
+
+    } }
+
+    Component { id: lyricsMaterial; Column { width: parent ? parent.width : 400; spacing: 12
             SectionTitle { label: "MATERIAL" }
 
             Flow {
@@ -1990,7 +2142,7 @@ Rectangle {
 
                     ChoiceButton {
                         required property var modelData
-                        width: (parent.width - 14) / 3
+                        width: Math.min(180, (parent.width - 14) / 3)
                         compact: true
                         label: modelData.label
                         active: ui.theme && ui.theme.lyricsMaterialMode === modelData.id
@@ -2098,14 +2250,14 @@ Rectangle {
                 spacing: 7
 
                 ChoiceButton {
-                    width: (parent.width - 7) / 2
+                    width: Math.min(220, (parent.width - 7) / 2)
                     label: "Editar máscara"
                     active: ui.theme && ui.theme.lyricsMaskHasStrokes
                     onClicked: if (ui.controller) ui.controller.lyricsMaskEditorRequested()
                 }
 
                 ChoiceButton {
-                    width: (parent.width - 7) / 2
+                    width: Math.min(220, (parent.width - 7) / 2)
                     label: "Limpar"
                     active: false
                     onClicked: if (ui.theme) ui.theme.clearLyricsMask(true)
@@ -2121,243 +2273,9 @@ Rectangle {
             }
 
             Divider { width: parent.width }
-            SectionTitle { label: "EXIBIÇÃO" }
 
-            Flow {
-                width: parent.width
-                spacing: 7
+    } }
 
-                Repeater {
-                    model: [
-                        { id: "progressive", label: "Progressivo" },
-                        { id: "line", label: "Linha" },
-                        { id: "current", label: "Atual" }
-                    ]
-
-                    ChoiceButton {
-                        required property var modelData
-                        width: (parent.width - 14) / 3
-                        compact: true
-                        label: modelData.label
-                        active: ui.theme && ui.theme.lyricsRevealMode === modelData.id
-                        onClicked: ui.updateLyrics({ revealMode: modelData.id })
-                    }
-                }
-            }
-
-            SettingSlider {
-                width: parent.width
-                label: "Sincronia"
-                hint: "Use negativo para atrasar, positivo para adiantar"
-                minimum: -3000
-                maximum: 3000
-                value: ui.theme ? ui.theme.lyricsSyncOffsetMs : 460
-                valueText: (value > 0 ? "+" : "") + Math.round(value) + "ms"
-                onValueRequested: function(newValue) { ui.updateLyrics({ syncOffsetMs: newValue }) }
-            }
-
-            Divider { width: parent.width }
-            SectionTitle { label: "LAYOUT" }
-
-            Flow {
-                width: parent.width
-                spacing: 7
-
-                Repeater {
-                    model: [
-                        { id: "simple", label: "Simples" },
-                        { id: "vertical", label: "Vertical" },
-                        { id: "cascade", label: "Cascata" },
-                        { id: "centered", label: "Centro" },
-                        { id: "two", label: "Dois lados" },
-                        { id: "four", label: "4 lyrics" }
-                    ]
-
-                    ChoiceButton {
-                        required property var modelData
-                        width: (parent.width - 7) / 2
-                        compact: true
-                        label: modelData.label
-                        active: ui.theme && ui.theme.lyricsLayoutMode === modelData.id
-                        onClicked: ui.selectLyricsLayout(modelData.id)
-                    }
-                }
-            }
-
-            Column {
-                width: parent.width
-                visible: ui.theme && (ui.theme.lyricsLayoutMode === "two" || ui.theme.lyricsLayoutMode === "four")
-                height: visible ? implicitHeight : 0
-                spacing: 8
-
-                Divider { width: parent.width }
-                SectionTitle { label: "BLOCO" }
-
-                Flow {
-                    width: parent.width
-                    spacing: 7
-
-                    Repeater {
-                        model: ui.lyricsBlockCount()
-
-                        ChoiceButton {
-                            required property int index
-                            width: ui.lyricsBlockCount() > 2 ? (parent.width - 7) / 2 : (parent.width - 7) / 2
-                            compact: true
-                            label: "Bloco " + (index + 1)
-                            active: ui.selectedLyricsBlock === index
-                            onClicked: ui.selectedLyricsBlock = index
-                        }
-                    }
-                }
-
-                SettingSlider {
-                    width: parent.width
-                    label: "Bloco X"
-                    hint: "Posição horizontal do bloco selecionado"
-                    minimum: 0
-                    maximum: 100
-                    value: ui.selectedLyricsBlockX()
-                    valueText: Math.round(value) + "%"
-                    onValueRequested: function(newValue) { ui.updateSelectedLyricsBlockPosition("x", newValue) }
-                }
-
-                SettingSlider {
-                    width: parent.width
-                    label: "Bloco Y"
-                    hint: "Posição vertical do bloco selecionado"
-                    minimum: 0
-                    maximum: 100
-                    value: ui.selectedLyricsBlockY()
-                    valueText: Math.round(value) + "%"
-                    onValueRequested: function(newValue) { ui.updateSelectedLyricsBlockPosition("y", newValue) }
-                }
-
-                Flow {
-                    width: parent.width
-                    spacing: 7
-
-                    Repeater {
-                        model: [
-                            { id: "inherit", label: "Cor geral" },
-                            { id: "pywal", label: "Pywal" },
-                            { id: "palette", label: "Paleta" },
-                            { id: "manual", label: "Manual" }
-                        ]
-
-                        ChoiceButton {
-                            required property var modelData
-                            width: (parent.width - 7) / 2
-                            compact: true
-                            label: modelData.label
-                            active: ui.theme && ui.theme.lyricsBlockColorMode(ui.selectedLyricsBlock) === modelData.id
-                            onClicked: ui.updateSelectedLyricsBlockStyle({ colorMode: modelData.id })
-                        }
-                    }
-                }
-
-                TextInputRow {
-                    width: parent.width
-                    visible: ui.theme && ui.theme.lyricsBlockColorMode(ui.selectedLyricsBlock) === "manual"
-                    height: visible ? implicitHeight : 0
-                    label: "Cor do bloco"
-                    hint: "Hexadecimal do bloco selecionado"
-                    value: ui.theme ? ui.theme.lyricsBlockManualColor(ui.selectedLyricsBlock) : "#f5f7ff"
-                    onValueSubmitted: function(newValue) { ui.updateSelectedLyricsBlockStyle({ colorMode: "manual", manualColor: newValue }) }
-                }
-
-                Flow {
-                    width: parent.width
-                    spacing: 7
-
-                    Repeater {
-                        model: [
-                            { id: "inherit", label: "Glow geral" },
-                            { id: "on", label: "Glow ON" },
-                            { id: "off", label: "Glow OFF" }
-                        ]
-
-                        ChoiceButton {
-                            required property var modelData
-                            width: (parent.width - 14) / 3
-                            compact: true
-                            label: modelData.label
-                            active: ui.theme && ui.theme.lyricsBlockGlowMode(ui.selectedLyricsBlock) === modelData.id
-                            onClicked: ui.updateSelectedLyricsBlockStyle({ glowMode: modelData.id })
-                        }
-                    }
-                }
-
-                SettingSlider {
-                    width: parent.width
-                    label: "Glow do bloco"
-                    hint: "Intensidade individual do brilho"
-                    minimum: 0
-                    maximum: 1
-                    value: ui.theme ? ui.theme.lyricsBlockGlowIntensity(ui.selectedLyricsBlock) : 0.45
-                    valueText: Math.round(value * 100) + "%"
-                    onValueRequested: function(newValue) { ui.updateSelectedLyricsBlockStyle({ glowIntensity: newValue }) }
-                }
-            }
-
-            Divider { width: parent.width }
-            SectionTitle { label: "ANIMAÇÃO" }
-
-            ToggleRow {
-                width: parent.width
-                label: "Flutuação"
-                hint: "Movimento suave nas palavras"
-                checked: ui.theme ? ui.theme.lyricsFloatEnabled : true
-                onToggled: ui.updateLyrics({ floatEnabled: !(ui.theme && ui.theme.lyricsFloatEnabled) })
-            }
-
-            SettingSlider {
-                width: parent.width
-                visible: ui.theme ? ui.theme.lyricsFloatEnabled : true
-                height: visible ? implicitHeight : 0
-                label: "Força da flutuação"
-                hint: "Deslocamento suave em pixels"
-                minimum: 0
-                maximum: 24
-                value: ui.theme ? ui.theme.lyricsFloatIntensity : 5
-                valueText: Math.round(value) + "px"
-                onValueRequested: function(newValue) { ui.updateLyrics({ floatIntensity: newValue }) }
-            }
-
-            Flow {
-                width: parent.width
-                spacing: 7
-
-                Repeater {
-                    model: [
-                        { id: "instant", label: "Instantâneo" },
-                        { id: "fade", label: "Fade" },
-                        { id: "slide", label: "Slide" }
-                    ]
-
-                    ChoiceButton {
-                        required property var modelData
-                        width: (parent.width - 14) / 3
-                        compact: true
-                        label: modelData.label
-                        active: ui.theme && ui.theme.lyricsAnimationMode === modelData.id
-                        onClicked: ui.updateLyrics({ animation: modelData.id })
-                    }
-                }
-            }
-
-            Text {
-                width: parent.width
-                text: ui.theme && ui.theme.lyricsAnimationMode === "instant"
-                    ? "Instantâneo troca as palavras sem fade nem espera."
-                    : "Fade e Slide ficam disponíveis para testes futuros."
-                color: ui.secondaryText
-                font.family: ui.uiFont
-                font.pixelSize: 10
-                wrapMode: Text.WordWrap
-            }
-        }
-    }
 
     Component {
         id: velyricsPage
@@ -2458,6 +2376,7 @@ Rectangle {
 
                 TextInput {
                     id: fontSearch
+                    objectName: "velyrics.font-search"
                     anchors {
                         fill: parent
                         leftMargin: 12
@@ -2486,6 +2405,7 @@ Rectangle {
 
                 ListView {
                     id: fontList
+                    objectName: "velyrics.font"
                     anchors {
                         fill: parent
                         margins: 4
@@ -2562,4 +2482,43 @@ Rectangle {
             }
         }
     }
+
+    Component { id: sidebarPage; Column { width: parent ? parent.width : 400; spacing: 12
+
+        Loader { width: parent.width; sourceComponent: barPage }
+        Loader { width: parent.width; sourceComponent: menuPage }
+
+    } }
+
+    Component { id: systemPage; Column { width: parent ? parent.width : 400; spacing: 12
+
+        Loader { width: parent.width; sourceComponent: powerPage }
+            ToggleRow {
+                width: parent.width
+                label: "Cores de terminal fortes"
+                hint: ui.controller && ui.controller.terminalStrongColors
+                    ? "Fundo escuro e contrastado, ainda combinado ao wallpaper"
+                    : "Usa a cor normal extraída do wallpaper"
+                checked: ui.controller ? ui.controller.terminalStrongColors : false
+                onToggled: if (ui.controller) ui.controller.setTerminalStrongColors(!ui.controller.terminalStrongColors)
+            }
+        SectionTitle { label: "INTEGRAÇÕES" }
+        ToggleRow { width: parent.width; label: "Reiniciar Zen automaticamente"; hint: "Aplicação do tema no navegador"
+            checked: ui.controller.zenAutoRestart; onToggled: ui.controller.setZenAutoRestart(!checked) }
+        ToggleRow { width: parent.width; label: "Balanceamento do tema Web"; hint: "Ajusta o tema dos sites no Zen"
+            checked: ui.controller.webThemeBalance; onToggled: ui.controller.setWebThemeBalance(!checked) }
+        SettingSlider { width: parent.width; label: "Opacidade do VS Code"; minimum: 0.3; maximum: 1
+            value: ui.controller.codeOpacity; valueText: Math.round(value*100)+"%"
+            onValueRequested: value => ui.controller.setCodeOpacity(value) }
+        SectionTitle { objectName: "historical.world-clock"; label: "RELÓGIOS MUNDIAIS" }
+        Repeater { model: 2
+            Row { required property int index; width: parent.width; spacing: 8
+                ChoiceButton { width: 40; label: "‹"; onClicked: ui.controller.cycleWorldClock(parent.index,-1) }
+                Text { width: parent.width-96; height: 36; verticalAlignment: Text.AlignVCenter
+                    text: ui.controller.worldClockItems[parent.index].label; color: ui.primaryText; font.family: ui.uiFont }
+                ChoiceButton { width: 40; label: "›"; onClicked: ui.controller.cycleWorldClock(parent.index,1) }
+            }
+        }
+
+    } }
 }

@@ -4,6 +4,7 @@ import "../features/topbar/TimerGeometry.js" as TimerGeometry
 Item {
     id: root
 
+    property bool reducedMotion: false
     property real value: 0
     property real minimumValue: 0
     property color accent: "#ff9d68"
@@ -12,8 +13,8 @@ Item {
     readonly property bool dragging: pointer.pressed
     property real topStretch: 0
     property real bottomStretch: 0
-    Behavior on topStretch { enabled: !pointer.pressed; NumberAnimation { duration: 210; easing.type: Easing.OutCubic } }
-    Behavior on bottomStretch { enabled: !pointer.pressed; NumberAnimation { duration: 210; easing.type: Easing.OutCubic } }
+    Behavior on topStretch { enabled: !pointer.pressed && !root.reducedMotion; NumberAnimation { duration: 210; easing.type: Easing.OutCubic } }
+    Behavior on bottomStretch { enabled: !pointer.pressed && !root.reducedMotion; NumberAnimation { duration: 210; easing.type: Easing.OutCubic } }
     signal edited(real value)
 
     Accessible.role: Accessible.Slider

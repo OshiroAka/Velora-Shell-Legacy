@@ -19,6 +19,7 @@ Scope {
     property var pendingProfileComposition: null
     property bool outgoingSavedForProfile: false
     property string lastError: ""
+    property string observedScene: ""
 
     signal compositionRestored(string wallpaper)
     signal compositionSaved(string wallpaper)
@@ -97,6 +98,7 @@ Scope {
                 && !(pendingMatches && outgoingSavedForProfile))
             saveActive()
 
+        observedScene = JSON.stringify(sceneOnly(root.config.compositionSnapshot()))
         activeKey = key
         const pending = pendingMatches ? pendingProfileComposition : null
         pendingProfileKey = ""
@@ -187,7 +189,10 @@ Scope {
     Connections {
         target: root.config
         function onConfigurationChanged() {
-            if (root.ready && !root.restoring && root.activeKey.length)
+            const scene = JSON.stringify(root.sceneOnly(root.config.compositionSnapshot()))
+            const changed = scene !== root.observedScene
+            root.observedScene = scene
+            if (changed && root.ready && !root.restoring && root.activeKey.length)
                 compositionDebounce.restart()
         }
     }

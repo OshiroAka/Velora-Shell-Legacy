@@ -42,6 +42,18 @@ readonly property int spotifyQueueCount:
     readonly property var player: choosePlayer(playersRevision, players.length, preferredPlayer)
 
     readonly property bool hasPlayer: player !== null
+    readonly property var spotifyPlayer: {
+        playersRevision
+        return players.find(p => String(p.identity || "").toLowerCase().includes("spotify")
+            || String(p.dbusName || "").toLowerCase().includes("spotify")) || null
+    }
+    readonly property bool spotifyPlaying: !!spotifyPlayer && spotifyPlayer.isPlaying
+    readonly property bool canVolume: !!player && player.volumeSupported && player.canControl
+    readonly property real volume: canVolume ? player.volume : 0
+    function selectSpotify() { if (spotifyPlayer) preferredPlayer = spotifyPlayer.dbusName }
+    function setVolume(value) {
+        if (canVolume && Number.isFinite(value)) player.volume = Math.max(0, Math.min(1, value))
+    }
     readonly property string identity: player ? String(player.identity || "") : ""
     readonly property string title: player && String(player.trackTitle || "").length
         ? String(player.trackTitle) : "Nada tocando"

@@ -25,6 +25,10 @@ FocusScope {
     property bool rightSide: false
     property real railWidth: 64
     property real anchorY: 260
+    property real verticalMargin: 24
+    property bool fullHeightSurface: false
+    property int contentExitDuration: motion.contentExit
+    property int surfaceExitDuration: motion.closeDuration
     property bool triggerHovered: false
     property bool blocked: false
     property bool opened: false
@@ -38,11 +42,11 @@ FocusScope {
     property real handoffFromHeight: 0
     property real handoffFromY: 0
     readonly property real targetWidth: Math.min(preferredWidth, Math.max(0, width - railWidth - 16))
-    readonly property real targetHeight: Math.min(preferredHeight, Math.max(0, height - 48))
+    readonly property real targetHeight: Math.min(preferredHeight, Math.max(0, height - 2 * verticalMargin))
     readonly property real bodyWidth: Math.min(Math.max(0, width - railWidth - 16), handoffActive ? (handoffFromWidth + (targetWidth - handoffFromWidth) * handoffProgress) * reveal : targetWidth * reveal)
-    readonly property real bodyHeight: Math.min(Math.max(0, height - 48), handoffActive ? 34 + (handoffFromHeight + (targetHeight - handoffFromHeight) * handoffProgress - 34) * reveal : 34 + (targetHeight - 34) * reveal)
-    readonly property real targetY: Math.max(24, Math.min(height - targetHeight - 24, anchorY - targetHeight / 2))
-    readonly property real bodyY: Math.max(24, Math.min(height - bodyHeight - 24, handoffActive ? handoffFromY + (targetY - handoffFromY) * handoffProgress : anchorY - bodyHeight / 2))
+    readonly property real bodyHeight: fullHeightSurface ? targetHeight : Math.min(Math.max(0, height - 2 * verticalMargin), handoffActive ? 34 + (handoffFromHeight + (targetHeight - handoffFromHeight) * handoffProgress - 34) * reveal : 34 + (targetHeight - 34) * reveal)
+    readonly property real targetY: Math.max(verticalMargin, Math.min(height - targetHeight - verticalMargin, anchorY - targetHeight / 2))
+    readonly property real bodyY: fullHeightSurface ? targetY : Math.max(verticalMargin, Math.min(height - bodyHeight - verticalMargin, handoffActive ? handoffFromY + (targetY - handoffFromY) * handoffProgress : anchorY - bodyHeight / 2))
     readonly property var outline: ({visible: mounted, y: bodyY, width: bodyWidth, height: bodyHeight, extension: extension})
     property alias maskItem: presenceArea
     readonly property bool panelHovered: presence.hovered || extraHovered
@@ -102,6 +106,7 @@ FocusScope {
         handoffActive = false; handoffProgress = 1
     }
     function close() {
+        if (!opened && closing.running) return
         enterDelay.stop(); leaveDelay.stop(); expanding.stop()
         contentDelay.stop(); entering.stop()
         if (handoffActive) {
@@ -133,8 +138,8 @@ FocusScope {
     NumberAnimation { id: entering; target: root; property: "contentReveal"; to: 1; duration: root.motion.contentDuration; easing.type: root.motion.easeContent }
     SequentialAnimation {
         id: closing
-        NumberAnimation { target: root; property: "contentReveal"; to: 0; duration: root.motion.contentExit; easing.type: Easing.InCubic }
-        NumberAnimation { target: root; property: "reveal"; to: 0; duration: root.motion.closeDuration; easing.type: root.motion.easeHandoff }
+        NumberAnimation { target: root; property: "contentReveal"; to: 0; duration: root.contentExitDuration; easing.type: Easing.InCubic }
+        NumberAnimation { target: root; property: "reveal"; to: 0; duration: root.surfaceExitDuration; easing.type: root.motion.easeHandoff }
         ScriptAction { script: if (!root.opened) { root.mounted = false; root.handoffActive = false } }
     }
     Item {

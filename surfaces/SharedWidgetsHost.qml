@@ -28,6 +28,8 @@ Variants {
     required property int opticsGeneration
     property bool barOnRight: false
     property bool nativeBarMaterial: false
+    property bool visualizerSuppressed: false
+    property real visualizerDockProgress: 0
     property int visualizerRailInset: 0
     property int visualizerCornerRadius: 0
     property int visualizerBottomInset: 0
@@ -197,7 +199,7 @@ Variants {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: 180
+            height: 180 * (1 - root.visualizerDockProgress)
             theme: root.theme
             visualizer: root.visualizer
             darkPalette: true
@@ -205,7 +207,7 @@ Variants {
             clipCornerRadius: 0
             clipBottomInset: 0
             clipSideOnRight: root.barOnRight
-            visible: !root.nativeBarMaterial
+            visible: !root.nativeBarMaterial && (!root.visualizerSuppressed || root.visualizerDockProgress < .999)
                 && root.config.desktopVisualizerEnabled && root.visualizer.running && !root.preview.shown
                 && !(root.settings.shown && root.settings.mode === "editing")
             opacity: 0.78

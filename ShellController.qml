@@ -14,6 +14,30 @@ Scope {
     id: root
 
     required property var composition
+    property var edgeMediaPanels: ({})
+    readonly property bool edgeMediaOpen: Object.keys(edgeMediaPanels).length > 0
+    property var edgeSpectrumPanels: ({})
+    readonly property bool edgeSpectrumOpen: Object.keys(edgeSpectrumPanels).length > 0
+    property var edgeDockProgress: ({})
+    readonly property real visualizerDockProgress: Math.max(0, ...Object.values(edgeDockProgress))
+    function setEdgeDockProgress(screenName, progress) {
+        const next = Object.assign({}, edgeDockProgress)
+        if (progress > .0001) next[screenName] = progress
+        else delete next[screenName]
+        edgeDockProgress = next
+    }
+    function setEdgeSpectrumVisible(screenName, visible) {
+        const next = Object.assign({}, edgeSpectrumPanels)
+        if (visible) next[screenName] = true
+        else delete next[screenName]
+        edgeSpectrumPanels = next
+    }
+    function setEdgeMediaVisible(screenName, visible) {
+        const next = Object.assign({}, edgeMediaPanels)
+        if (visible) next[screenName] = true
+        else delete next[screenName]
+        edgeMediaPanels = next
+    }
     property alias unifiedTheme: veloraTheme
     function openUnifiedSettings() { closeQuickPopup(); composition.openEditor("desktop") }
 
@@ -190,6 +214,8 @@ Scope {
     property string pendingLayoutPosition: ""
     readonly property bool topBarLayout: false
     readonly property bool sideBarLayoutEnabled: !topBarLayout
+    // Temporarily hide the rail's media card; retain the shared media service.
+    readonly property bool sidebarMediaEnabled: false
     readonly property int focusedWorkspaceId: Hyprland.focusedWorkspace
         ? Number(Hyprland.focusedWorkspace.id)
         : -1
@@ -207,14 +233,15 @@ Scope {
     readonly property string leftMenuAttachSide: leftMenuOnLeft ? "left" : "right"
     readonly property bool rightSoftLayout: true
     readonly property real referenceScale: 1
-    readonly property int sidebarVisualWidth: 64
+    readonly property int sidebarVisualWidth: 63
     readonly property real unifiedBarWavePhase: root.composition
         ? root.composition.unifiedBarWavePhase : 0
     readonly property int desktopFrameMargin: 0
     readonly property int sidebarOuterMargin: 0
     readonly property int sidebarVerticalMargin: 0
     readonly property int sidebarCornerRadius: 24
-    readonly property int bottomBarHeight: 18
+    readonly property int bottomBarHeight: 16
+    readonly property int oppositeFrameWidth: 4
     readonly property int screenCornerRadius: 24
     readonly property int sideVisualizerWaveWidth: 58
     readonly property real sideVisualizerCapReach: Math.min(38, sideVisualizerWaveWidth * 0.46)
@@ -7258,7 +7285,7 @@ Scope {
             readonly property int weatherTopTargetY: root.weatherTopOpen ? weatherTopOpenY : -weatherTopTargetHeight - 18
             readonly property int weatherTopCornerRadius: 24
             property var activeRailSystemPopover: null
-            readonly property bool wantsDrawerKeyboard: mediaPopover.mounted || coffeePopover.mounted || notesPopover.mounted || bluetoothPopover.mounted || notificationsPopover.mounted || wifiPopover.mounted || root.focusMode || root.quickPopupType === "search" || root.quickPopupType === "agenda" || root.quickPopupType === "weatherPanel" || root.settingsPanelOpen || root.wallpaperSelectorOpen || (root.topWallpaperKeyboardFocus && root.topWallpaperUsesBottomSelector) || (!root.topBarLayout && root.weatherTopKeyboardFocus) || root.leftMenuInteractiveFocus
+            readonly property bool wantsDrawerKeyboard: railControls.mounted || edgePopover.mounted || mediaPopover.mounted || coffeePopover.mounted || notesPopover.mounted || bluetoothPopover.mounted || notificationsPopover.mounted || wifiPopover.mounted || root.focusMode || root.quickPopupType === "search" || root.quickPopupType === "agenda" || root.quickPopupType === "weatherPanel" || root.settingsPanelOpen || root.wallpaperSelectorOpen || (root.topWallpaperKeyboardFocus && root.topWallpaperUsesBottomSelector) || (!root.topBarLayout && root.weatherTopKeyboardFocus) || root.leftMenuInteractiveFocus
 
             screen: modelData
             color: "transparent"
@@ -7311,7 +7338,20 @@ Scope {
                     + Number(root.bottomBarHeight / height).toFixed(6) + " "
                     + Number(railControls.nativePanel && railControls.nativePanel.extension ? railControls.nativePanel.extension.y / height : 0).toFixed(6) + " "
                     + Number(railControls.nativePanel && railControls.nativePanel.extension ? railControls.nativePanel.extension.width / width : 0).toFixed(6) + " "
-                    + Number(railControls.nativePanel && railControls.nativePanel.extension ? railControls.nativePanel.extension.height / height : 0).toFixed(6))
+                    + Number(railControls.nativePanel && railControls.nativePanel.extension ? railControls.nativePanel.extension.height / height : 0).toFixed(6) + " "
+                    + Number(root.oppositeFrameWidth / width).toFixed(6) + " "
+                    + Number(edgePopover.bodyY / height).toFixed(6) + " "
+                    + Number(edgePopover.mounted ? edgePopover.bodyWidth / width : 0).toFixed(6) + " "
+                    + Number(edgePopover.bodyHeight / height).toFixed(6) + " "
+                    + Number(edgePopover.contour).toFixed(6) + " "
+                    + Number(edgePopover.extension.y / height).toFixed(6) + " "
+                    + Number(edgePopover.extension.width / width).toFixed(6) + " "
+                    + Number(edgePopover.extension.height / height).toFixed(6) + " "
+                    + edgePopover.contourSamples.map(value => Number(value).toFixed(6)).join(" ") + " "
+                    + Number(edgePopover.sidebarWaveScale).toFixed(6) + " "
+                    + Number(edgePopover.dockProgress).toFixed(6) + " "
+                    + Number(edgePopover.sidebarWaveWidth / width).toFixed(6) + " "
+                    + edgePopover.sidebarSamples.map(value => Number(value).toFixed(6)).join(" "))
             }
 
             DesktopBarMaterial {
@@ -7367,6 +7407,9 @@ Scope {
                     radius: 0
                 }
 
+                Region { item: edgeTrigger }
+                Region { item: edgePopover.maskItem }
+                Region { item: edgePopover.labelMask }
                 Region { item: railControls.volumeMask }
                 Region { item: railControls.brightnessMask }
                 Region { item: railControls.batteryMask }
@@ -7594,10 +7637,50 @@ Scope {
                     ctx.lineTo(w, height - bottomStrip - innerRadius)
                     ctx.arcTo(w, height - bottomStrip,
                         w + innerRadius, height - bottomStrip, innerRadius)
-                    ctx.lineTo(width, height - bottomStrip)
+                    const edge = width - root.oppositeFrameWidth
+                    ctx.lineTo(edge - innerRadius, height - bottomStrip)
+                    ctx.arcTo(edge, height - bottomStrip, edge, height - bottomStrip - innerRadius, innerRadius)
+                    if (edgePopover.mounted && !root.barOnRight) {
+                        const reach = edgePopover.bodyWidth
+                        const by = edgePopover.bodyY
+                        const bh = edgePopover.bodyHeight
+                        const join = Math.min(24, reach * .5)
+                        const nose = edge - reach
+                        ctx.lineTo(edge, by + bh + join)
+                        ctx.bezierCurveTo(edge, by + bh - join, nose, by + bh + join, nose, by + bh - join)
+                        if (edgePopover.contour > .01) {
+                            for (let i = 160; i >= 0; --i) {
+                                const t = i / 160
+                                const wave = edgePopover.contourOffset(t)
+                                ctx.lineTo(nose + wave, by + bh * t)
+                            }
+                        } else if (edgePopover.extension.width > .01) {
+                            const ey = edgePopover.extension.y
+                            const ew = edgePopover.extension.width
+                            ctx.lineTo(nose, ey + 52)
+                            ctx.bezierCurveTo(nose, ey + 40, nose - ew, ey + 56, nose - ew, ey + 34)
+                            ctx.lineTo(nose - ew, ey + 10)
+                            ctx.bezierCurveTo(nose - ew, ey - 12, nose, ey + 4, nose, ey - 8)
+                        }
+                        ctx.lineTo(nose, by + join)
+                        ctx.bezierCurveTo(nose, by - join, edge, by + join, edge, by - join)
+                    }
+                    ctx.lineTo(edge, top + innerRadius)
+                    ctx.arcTo(edge, top, edge - innerRadius, top, innerRadius)
+                    ctx.lineTo(width, top)
                     ctx.lineTo(width, height)
                     ctx.lineTo(0, height)
                     ctx.closePath()
+                    if (edgePopover.sidebarWaveScale > 0 && !root.barOnRight) {
+                        // Same samples and one fill as the right menu: no overlay tint.
+                        ctx.moveTo(0, top)
+                        for (let i = 0; i <= 160; ++i) {
+                            const t = i / 160
+                            ctx.lineTo(w + edgePopover.sidebarOffset(t), height * t)
+                        }
+                        ctx.lineTo(0, height)
+                        ctx.closePath()
+                    }
                     // Only this outline is supplied by the native material.
                     // Other attached QML panels still need their own tint.
                     ctx.fillStyle = root.composition && root.composition.nativeBarMaterial
@@ -9522,6 +9605,7 @@ Scope {
 
                 theme: veloraTheme
                 mediaService: root.composition ? root.composition.mediaService : null
+                mediaEnabled: root.sidebarMediaEnabled
                 audioVisualizer: root.composition ? root.composition.audioVisualizer : null
                 toolsService: root.composition ? root.composition.topbarTools : null
                 fanPlusService: root.composition ? root.composition.fanPlusService : null
@@ -9597,6 +9681,7 @@ Scope {
                     && root.audioVisualizerProcessWanted
                 cavaForceActive: false
                 shellDrawsPanelSurface: root.sideBarLayoutEnabled
+                reducedIconMotion: !!root.composition && root.composition.motionTokens.reduced
                 volumeControlOpen: root.volumeControlOpen
                 brightnessControlOpen: root.brightnessControlOpen
                 batteryControlOpen: root.batteryControlOpen
@@ -9637,6 +9722,10 @@ Scope {
 
             VeloraRailControls {
                 id: railControls
+                motion: root.composition.motionTokens
+                handoffSource: panel.activeRailSystemPopover
+                onLevelOpening: popover => panel.activeRailSystemPopover = popover
+                onLevelClosed: type => { if (root.activeRailControl === type) root.activeRailControl = "" }
                 anchors.fill: parent
                 z: 11
                 theme: veloraTheme
@@ -9662,6 +9751,59 @@ Scope {
                 }
             }
 
+            Item {
+                id: edgeTrigger
+                x: parent.width - width; y: edgePopover.anchorY - height / 2
+                width: root.sideBarLayoutEnabled && !root.barOnRight ? root.oppositeFrameWidth + 4 : 0
+                height: 200
+                HoverHandler { id: edgeHover; blocking: false }
+            }
+            VeloraEdgePopover {
+                id: edgePopover
+                onMediaPanelActiveChanged: root.setEdgeMediaVisible(panel.modelData.name, mediaPanelActive)
+                onSpectrumActiveChanged: root.setEdgeSpectrumVisible(panel.modelData.name, spectrumActive)
+                Component.onDestruction: {
+                    root.setEdgeMediaVisible(panel.modelData.name, false)
+                    root.setEdgeSpectrumVisible(panel.modelData.name, false)
+                    root.setEdgeDockProgress(panel.modelData.name, 0)
+                }
+                anchors.fill: parent
+                z: 12
+                motion: root.composition.motionTokens
+                enabled: root.sideBarLayoutEnabled && !root.barOnRight && !!root.composition
+                theme: root.composition ? root.composition.topbarTheme : null
+                media: root.composition ? root.composition.mediaService : null
+                analyzer: root.composition ? root.composition.audioVisualizer : null
+                railWidth: root.oppositeFrameWidth
+                // The local origin starts below the reserved topbar.
+                anchorY: height - panel.modelData.height / 2
+                triggerHovered: edgeHover.hovered
+                onOpening: {
+                    coffeePopover.close(); notesPopover.close(); bluetoothPopover.close()
+                    notificationsPopover.close(); wifiPopover.close(); mediaPopover.close()
+                    root.activeRailControl = ""
+                    root.closeQuickPopup()
+                    if (root.composition) root.composition.closeTopbarTool()
+                }
+                onShapeChanged: {
+                    Qt.callLater(unifiedFrameCanvas.requestPaint)
+                    Qt.callLater(panel.syncUnifiedBarNativeShape)
+                }
+                onContourSamplesChanged: {
+                    Qt.callLater(unifiedFrameCanvas.requestPaint)
+                    Qt.callLater(panel.syncUnifiedBarNativeShape)
+                }
+                onSidebarWaveScaleChanged: {
+                    root.setEdgeDockProgress(panel.modelData.name, dockProgress)
+                    Qt.callLater(unifiedFrameCanvas.requestPaint)
+                    Qt.callLater(panel.syncUnifiedBarNativeShape)
+                }
+                onSidebarSamplesChanged: {
+                    Qt.callLater(unifiedFrameCanvas.requestPaint)
+                    Qt.callLater(panel.syncUnifiedBarNativeShape)
+                }
+            }
+
             VeloraRailCoffee {
                 id: coffeePopover
                 motion: root.composition.motionTokens
@@ -9672,7 +9814,8 @@ Scope {
                 system: root.composition ? root.composition.topbarTools : null
                 rightSide: root.barOnRight
                 railWidth: root.sidebarVisualWidth
-                onOpening: { bluetoothPopover.close(); notesPopover.close(); notificationsPopover.close(); wifiPopover.close(); mediaPopover.close(); root.activeRailControl = ""; root.closeQuickPopup(); if (root.composition) root.composition.closeTopbarTool() }
+                handoffSource: panel.activeRailSystemPopover
+                onOpening: { panel.activeRailSystemPopover = coffeePopover; bluetoothPopover.close(); notesPopover.close(); notificationsPopover.close(); wifiPopover.close(); mediaPopover.close(); root.activeRailControl = ""; root.closeQuickPopup(); if (root.composition) root.composition.closeTopbarTool() }
                 onShapeChanged: Qt.callLater(unifiedFrameCanvas.requestPaint)
             }
             VeloraRailNotes {
@@ -9685,7 +9828,8 @@ Scope {
                 system: root.composition ? root.composition.topbarTools : null
                 rightSide: root.barOnRight
                 railWidth: root.sidebarVisualWidth
-                onOpening: { bluetoothPopover.close(); coffeePopover.close(); notificationsPopover.close(); wifiPopover.close(); mediaPopover.close(); root.activeRailControl = ""; root.closeQuickPopup(); if (root.composition) root.composition.closeTopbarTool() }
+                handoffSource: panel.activeRailSystemPopover
+                onOpening: { panel.activeRailSystemPopover = notesPopover; bluetoothPopover.close(); coffeePopover.close(); notificationsPopover.close(); wifiPopover.close(); mediaPopover.close(); root.activeRailControl = ""; root.closeQuickPopup(); if (root.composition) root.composition.closeTopbarTool() }
                 onShapeChanged: Qt.callLater(unifiedFrameCanvas.requestPaint)
             }
             VeloraRailBluetooth {
@@ -9779,14 +9923,24 @@ Scope {
                 id: railToolOutsideInput
                 z: 9
                 width: panel.width
-                height: coffeePopover.mounted || notesPopover.mounted || bluetoothPopover.mounted || notificationsPopover.mounted || wifiPopover.mounted || mediaPopover.mounted ? panel.height : 0
+                height: railControls.mounted || edgePopover.mounted || coffeePopover.mounted || notesPopover.mounted || bluetoothPopover.mounted || notificationsPopover.mounted || wifiPopover.mounted || mediaPopover.mounted ? panel.height : 0
                 acceptedButtons: Qt.AllButtons
-                onPressed: { coffeePopover.close(); notesPopover.close(); bluetoothPopover.close(); notificationsPopover.close(); wifiPopover.close(); mediaPopover.close() }
+                onPressed: { root.activeRailControl = ""; edgePopover.close(); coffeePopover.close(); notesPopover.close(); bluetoothPopover.close(); notificationsPopover.close(); wifiPopover.close(); mediaPopover.close() }
             }
             Connections {
                 target: root
-                function onActiveRailControlChanged() { if (root.activeRailControl) { coffeePopover.close(); notesPopover.close(); bluetoothPopover.close(); notificationsPopover.close(); wifiPopover.close(); mediaPopover.close() } }
-                function onQuickPopupTypeChanged() { if (root.quickPopupType) { coffeePopover.close(); notesPopover.close(); bluetoothPopover.close(); notificationsPopover.close(); wifiPopover.close(); mediaPopover.close() } }
+                function onActiveRailControlChanged() {
+                    if (!root.activeRailControl) return
+                    if (!edgePopover.keepOpenForControl(root.activeRailControl)) edgePopover.close()
+                    coffeePopover.close(); notesPopover.close(); bluetoothPopover.close()
+                    notificationsPopover.close(); wifiPopover.close(); mediaPopover.close()
+                }
+                function onQuickPopupTypeChanged() {
+                    if (!root.quickPopupType) return
+                    if (!edgePopover.keepOpenForControl(root.quickPopupType)) edgePopover.close()
+                    coffeePopover.close(); notesPopover.close(); bluetoothPopover.close()
+                    notificationsPopover.close(); wifiPopover.close(); mediaPopover.close()
+                }
             }
 
             Item {
@@ -10262,6 +10416,7 @@ Scope {
 
                     sourceComponent: Component {
                         VeloraSettingsPanel {
+                            composition: root.composition
                             theme: veloraTheme
                             externalSurface: true
                             attachSide: root.popupAttachSide

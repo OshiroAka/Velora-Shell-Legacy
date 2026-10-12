@@ -138,12 +138,20 @@ Item {
                     color: root.theme.accentMuted
                     visible: pointer.containsMouse && entry.type !== "workspaces"
                 }
+                Components.VeloraIconMotion {
+                    id: legacyIconMotion
+                    highlighted: pointer.containsMouse || entry.activeFocus
+                    reducedMotion: root.config.reducedMotion
+                }
                 Row {
                     id: entryVisual
                     anchors.centerIn: parent
                     spacing: 8 * root.unit
                     visible: !["workspaces", "context"].includes(entry.type)
                     Components.VeloraMaterialIcon {
+                        scale: legacyIconMotion.zoom
+                        transform: Translate { y: legacyIconMotion.lift }
+                        opacity: legacyIconMotion.inkOpacity
                         anchors.verticalCenter: parent.verticalCenter
                         width: 23 * root.unit; height: width
                         visible: !["clock", "brand"].includes(entry.type)
@@ -254,7 +262,14 @@ Item {
             onSecondaryActivated: root.controller.toggle("cat", catItem, root.host)
             Component.onCompleted: root.controller.registerItem("cat", catItem, root.host)
             Component.onDestruction: root.controller.unregisterItem(catItem)
+            Components.VeloraIconMotion {
+                id: catMotion
+                highlighted: catItem.hovered || catItem.activeFocus
+                reducedMotion: root.config.reducedMotion
+            }
             RunCatIcon {
+                scale: catMotion.zoom
+                transform: Translate { y: catMotion.lift }
                 anchors.centerIn: parent
                 width: 34; height: 22
                 color: root.theme.textPrimary
@@ -289,10 +304,12 @@ Item {
                 height: root.height
                 label: root.label(type)
                 Rectangle {
-                    // Boundaries of the text, tools, and calendar groups.
-                    visible: (item.type === "thing" && item.index < toolRepeater.count - 1)
-                        || (item.type === "clock" && item.index > 0)
-                    x: item.type === "thing" ? parent.width - 1 : 0
+                    // A trailing divider for message, timer and search; avoid
+                    // doubling it when the calendar follows one of them.
+                    visible: ["thing", "timer", "search"].includes(item.type)
+                        || (item.type === "clock" && item.index > 0
+                            && !["thing", "timer", "search"].includes(root.visibleTools[item.index - 1]))
+                    x: item.type === "clock" ? 0 : parent.width - 1
                     anchors.verticalCenter: parent.verticalCenter
                     width: 1; height: 16; radius: 0.5
                     color: root.theme.withAlpha(root.theme.textPrimary, 0.32)
@@ -348,13 +365,24 @@ Item {
                 }
                 Component.onCompleted: root.controller.registerItem(type, item, root.host)
                 Component.onDestruction: root.controller.unregisterItem(item)
+                Components.VeloraIconMotion {
+                    id: iconMotion
+                    highlighted: item.hovered || item.activeFocus
+                    reducedMotion: root.config.reducedMotion
+                }
                 BatteryIndicator {
+                    scale: iconMotion.zoom
+                    transform: Translate { y: iconMotion.lift }
+                    opacity: iconMotion.inkOpacity
                     anchors.centerIn: parent
                     visible: item.type === "battery"
                     available: root.status.hasBattery; level: root.status.batteryLevel; charging: root.status.batteryCharging
                     color: root.theme.textPrimary; warningColor: root.theme.warning; criticalColor: root.theme.danger
                 }
                 BarIcon {
+                    scale: iconMotion.zoom
+                    transform: Translate { y: iconMotion.lift }
+                    opacity: iconMotion.inkOpacity
                     anchors.centerIn: parent
                     width: item.type === "cat" ? 34 : item.type === "caffeine" ? 24 : 20
                     height: 22
@@ -366,6 +394,9 @@ Item {
                     connected: root.status.wifiConnected
                 }
                 Loader {
+                    scale: iconMotion.zoom
+                    transform: Translate { y: iconMotion.lift }
+                    opacity: iconMotion.inkOpacity
                     anchors.centerIn: parent
                     active: item.type === "caffeine"
                     width: 24; height: 22
@@ -399,9 +430,17 @@ Item {
                         Behavior on color { ColorAnimation { duration: 160 } }
                     }
                 }
+                Rectangle {
+                    anchors.centerIn: parent
+                    visible: item.type === "thing"
+                    width: parent.width - 16; height: 25; radius: 7
+                    color: root.theme.withAlpha(root.theme.textPrimary, 0.07)
+                    border.width: 1
+                    border.color: root.theme.withAlpha(root.theme.textPrimary, 0.18)
+                }
                 Text {
                     anchors.centerIn: parent
-                    width: parent.width - 12
+                    width: parent.width - 28
                     visible: item.type === "thing"
                     text: item.type === "thing" ? root.system.oneThing || "What is the one thing?"
                         : root.clock.locale().toString(root.clock.now, "ddd d MMM  HH:mm").replace(/\./g, "")

@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CAPABILITIES = ["desktop-bar-material", "transition", "dial", "caustics", "topbar-connected", "bar-blur",
                 "widget-blur", "liquid-style", "wallpaper", "topbar-shape",
                 "unified-bar-shape", "topbar-settle", "right-menu-shape",
-                "settings-shape", "editor-shape", "selector-shape", "appearance",
+                "settings-shape", "settings-connected", "editor-shape", "selector-shape", "appearance",
                 "lock-layout", "shared-widgets-shape"]
 
 

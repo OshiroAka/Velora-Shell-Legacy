@@ -28,7 +28,7 @@ QtObject {
     readonly property real requestedOpacity: config.reduceTransparency
         ? 0.96 : Math.max(0.45, Math.min(1,
             Number(config.surfaceOpacity || 0.82)
-            + (0.55 - Number(config.blurStrength || 0.55)) * 0.10))
+            + (0.55 - Number(config.blurStrength)) * 0.10))
     readonly property real styleOpacity: minimal ? requestedOpacity * 0.58
         : requestedOpacity
     readonly property real contrastLevel: config.intelligentContrast
@@ -85,7 +85,7 @@ QtObject {
     property color rim: light
         ? Qt.rgba(1, 1, 1, 0.76)
         : Qt.rgba(1, 1, 1, 0.24
-            + Number(config.reflectionStrength || 0.35) * 0.34)
+            + Number(config.reflectionStrength) * 0.34)
     property color shadow: light
         ? Qt.rgba(0.02, 0.025, 0.04, 0.24)
         : Qt.rgba(0.006, 0.009, 0.018, 0.58)
@@ -210,7 +210,7 @@ QtObject {
         if (String(config.materialMode || "glass") === "solid")
             return "solid"
         if (String(config.materialMode || "glass") === "adaptive"
-                && Number(config.blurStrength || 0.55) < 0.18)
+                && Number(config.blurStrength) < 0.18)
             return "solid"
         return "liquid"
     }

@@ -1,4 +1,5 @@
 import QtQuick
+import "../core" as Core
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
@@ -13,8 +14,22 @@ Item {
     property bool rightSide: false
     property real railWidth: 64
     property var extraPanel: null
-    readonly property var nativePanel: [volumePanel, brightnessPanel, batteryPanel, extraPanel]
-        .find(p => p && p.visible && p.width > 0.01) || null
+    property var motion: defaultMotion
+    Core.Motion { id: defaultMotion }
+    property var handoffSource: null
+    readonly property bool mounted: volumePanel.mounted || brightnessPanel.mounted
+    readonly property bool interactionHeld: volumePanel.panelHeld || brightnessPanel.panelHeld
+    readonly property bool panelHovered: volumePanel.panelHovered || brightnessPanel.panelHovered
+    readonly property var nativePanel: volumePanel.opened ? volumePanel.outline
+        : brightnessPanel.opened ? brightnessPanel.outline
+        : extraPanel && extraPanel.visible ? extraPanel
+        : volumePanel.mounted ? volumePanel.outline
+        : brightnessPanel.mounted ? brightnessPanel.outline
+        : batteryPanel.visible ? batteryPanel : null
+    signal levelOpening(var popover)
+    signal levelClosed(string type)
+    onPanelHoveredChanged: panelHoverChanged(panelHovered || interactionHeld)
+    onInteractionHeldChanged: panelHoverChanged(panelHovered || interactionHeld)
     onNativePanelChanged: shapeChanged()
     property real volumeCenter: 300
     property real brightnessCenter: 390
@@ -23,8 +38,8 @@ Item {
     property bool brightnessOpen: false
     property bool batteryOpen: false
     property int refreshSerial: 0
-    property alias volumeMask: volumePanel
-    property alias brightnessMask: brightnessPanel
+    property alias volumeMask: volumePanel.maskItem
+    property alias brightnessMask: brightnessPanel.maskItem
     property alias batteryMask: batteryPanel
     readonly property real levelPanelHeight: 130
     readonly property real extensionWidth: 48
@@ -44,8 +59,8 @@ Item {
     signal shapeChanged()
     signal panelHoverChanged(bool hovered)
 
-    onVolumeOpenChanged: shapeChanged()
-    onBrightnessOpenChanged: { shapeChanged(); refreshBrightness() }
+    onVolumeOpenChanged: volumeOpen ? volumePanel.open() : volumePanel.close()
+    onBrightnessOpenChanged: { brightnessOpen ? brightnessPanel.open() : brightnessPanel.close(); refreshBrightness() }
     onRefreshSerialChanged: if (brightnessOpen) refreshBrightness()
     onBatteryOpenChanged: { shapeChanged(); refreshPower() }
     onVolumeCenterChanged: shapeChanged()
@@ -62,8 +77,7 @@ Item {
 
     // Extend the existing sidebar path, so translucent materials are filled once.
     function appendOutline(ctx, edge) {
-        const panels = [volumePanel, brightnessPanel, batteryPanel, extraPanel]
-            .filter(p => p && p.visible).sort((a, b) => a.y - b.y)
+        const panels = nativePanel && nativePanel.visible ? [nativePanel] : []
         for (const panel of panels) {
             const top = panel.y
             const bottom = top + panel.height
@@ -148,7 +162,7 @@ Item {
                 const fields = text.trim().split(",")
                 const value = fields.length > 3 ? Number(fields[3].replace("%", "")) / 100 : NaN
                 root.brightnessAvailable = Number.isFinite(value)
-                if (root.brightnessAvailable && !brightnessSlider.dragging && Date.now() >= root.brightnessHoldUntil)
+                if (root.brightnessAvailable && !brightnessPanel.panelHeld && Date.now() >= root.brightnessHoldUntil)
                     root.brightness = value
             }
         }
@@ -203,55 +217,38 @@ Item {
         }
     }
 
-    Item {
+    VeloraRailLevelPopover {
         id: volumePanel
-        x: root.rightSide ? root.width - root.railWidth - width : root.railWidth
-        y: root.panelY(root.volumeCenter, height)
-        width: root.volumeOpen ? root.extensionWidth : 0
-        height: root.levelPanelHeight
-        visible: width > 0.01
-        clip: true
-        Behavior on width { NumberAnimation { duration: root.volumeOpen ? 210 : 125; easing.type: root.volumeOpen ? Easing.OutCubic : Easing.InOutCubic } }
-        onWidthChanged: root.shapeChanged()
-        HoverHandler { onHoveredChanged: root.panelHoverChanged(hovered) }
-        VeloraRailSlider {
-            x: 8; y: 0; width: 32; height: parent.height
-            value: root.volume
-            available: root.audioAvailable
-            accent: root.accent
-            label: "Volume"
-            onEdited: value => {
-                root.sink.audio.volume = value
-                if (value > 0) root.sink.audio.muted = false
-            }
-            opacity: root.volumeOpen ? 1 : 0
-            Behavior on opacity { NumberAnimation { duration: root.volumeOpen ? 150 : 65 } }
+        objectName: "railVolumePopover"
+        anchors.fill: parent
+        theme: root.theme; motion: root.motion
+        rightSide: root.rightSide; railWidth: root.railWidth
+        anchorY: root.volumeCenter
+        handoffSource: root.handoffSource
+        value: root.volume; available: root.audioAvailable
+        accent: root.accent; label: "Volume"
+        onEdited: value => {
+            root.sink.audio.volume = value
+            if (value > 0) root.sink.audio.muted = false
         }
+        onOpening: root.levelOpening(volumePanel)
+        onOpenedChanged: if (!opened) Qt.callLater(function() { if (!volumePanel.opened) root.levelClosed("volume") })
+        onShapeChanged: root.shapeChanged()
     }
-
-    Item {
+    VeloraRailLevelPopover {
         id: brightnessPanel
-        x: root.rightSide ? root.width - root.railWidth - width : root.railWidth
-        y: root.panelY(root.brightnessCenter, height)
-        width: root.brightnessOpen ? root.extensionWidth : 0
-        height: root.levelPanelHeight
-        visible: width > 0.01
-        clip: true
-        Behavior on width { NumberAnimation { duration: root.brightnessOpen ? 210 : 125; easing.type: root.brightnessOpen ? Easing.OutCubic : Easing.InOutCubic } }
-        onWidthChanged: root.shapeChanged()
-        HoverHandler { onHoveredChanged: root.panelHoverChanged(hovered) }
-        VeloraRailSlider {
-            id: brightnessSlider
-            x: 8; y: 0; width: 32; height: parent.height
-            value: root.brightness
-            minimumValue: 0.05
-            available: root.brightnessAvailable
-            accent: root.accent
-            label: root.english ? "Brightness" : "Brilho"
-            onEdited: value => root.setBrightness(value)
-            opacity: root.brightnessOpen ? 1 : 0
-            Behavior on opacity { NumberAnimation { duration: root.brightnessOpen ? 150 : 65 } }
-        }
+        objectName: "railBrightnessPopover"
+        anchors.fill: parent
+        theme: root.theme; motion: root.motion
+        rightSide: root.rightSide; railWidth: root.railWidth
+        anchorY: root.brightnessCenter
+        handoffSource: root.handoffSource
+        value: root.brightness; minimumValue: .05; available: root.brightnessAvailable
+        accent: root.accent; label: root.english ? "Brightness" : "Brilho"
+        onEdited: value => root.setBrightness(value)
+        onOpening: root.levelOpening(brightnessPanel)
+        onOpenedChanged: if (!opened) Qt.callLater(function() { if (!brightnessPanel.opened) root.levelClosed("brightness") })
+        onShapeChanged: root.shapeChanged()
     }
 
     Item {

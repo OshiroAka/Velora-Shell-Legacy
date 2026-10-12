@@ -152,6 +152,15 @@ struct STopbarMorph {
     float sideBodyWidth = 0.F;
     float sideBodyHeight = 0.F;
     float bottomHeight = 0.F;
+    float oppositeWidth = 0.F;
+    std::array<float, 3> oppositePanel{}; // y, width, height
+    float oppositeContour = 0.F;
+    std::array<float, 21> oppositeCurve{};
+    float sideWaveScale = 0.F;
+    float waveDockProgress = 0.F;
+    float sideWaveWidth = 0.F;
+    std::array<float, 21> sideCurve{};
+    std::array<float, 3> oppositeLabel{}; // y, width, height
     float sideLabelY = 0.F;
     float sideLabelWidth = 0.F;
     float sideLabelHeight = 0.F;
@@ -165,6 +174,12 @@ std::array<STopbarMorph, TOPBAR_SHAPE_COUNT> g_topbarShapes;
 // Each monitor owns its anchor and expansion. Legacy/sidebar shapes stay separate.
 std::unordered_map<std::string, STopbarMorph> g_connectedTopbars;
 std::unordered_map<std::string, STopbarMorph> g_selectorShapes;
+// The editor owns the bottom material while Settings are attached. The desktop
+// host relinquishes that same pass, so neither tint nor blur is composited twice.
+std::unordered_map<std::string, STopbarMorph> g_bottomSettings;
+bool hasBottomSettings(const std::string& monitor) {
+    return g_bottomSettings.contains(monitor);
+}
 std::unordered_map<std::string, STopbarMorph> g_unifiedBarShapes;
 struct SDesktopBarMaterial {
     int mode = 1; // solid, glass, liquid
@@ -296,6 +311,14 @@ uniform vec4 pointer_position;
 uniform vec4 pointer_shape;
 // Desktop interior in framebuffer coordinates; both frame windows use it.
 uniform vec4 frameInterior;
+uniform vec4 oppositePanel; // center and half-size in framebuffer pixels
+uniform vec4 oppositeLabel;
+uniform float oppositeContour;
+uniform float oppositeCurve[21];
+uniform float sideWaveScale;
+uniform float waveDockProgress;
+uniform float sideWaveWidth;
+uniform float sideCurve[21];
 uniform float frameRadius;
 uniform vec4 sideLabel;
 uniform vec2 frost;
@@ -304,6 +327,8 @@ uniform vec4 barMaterial; // active, mode, blur, spectrum
 uniform float barBands[96];
 uniform vec4 statusPanel; // center and half-size, in draw-local pixels
 uniform vec4 statusMetrics; // anchor, neck, radius, join
+uniform vec4 bottomPanel; // center and half-size in framebuffer pixels
+uniform vec2 bottomMetrics; // radius, smooth join
 
 layout(location = 0) out vec4 fragColor;
 
@@ -362,27 +387,98 @@ float mainShapeSdf(vec2 point) {
     return roundedBoxSdf(mainShapePoint(point), bottomRight, radius);
 }
 
+float balancedBarBand(int index) {
+    int band = clamp(index, 0, 95);
+    // Low frequencies must lift both sides of the frame. Keep this mapping
+    // local to the desktop material; the analyzer's actual spectrum is intact.
+    return max(barBands[band], barBands[95 - band]);
+}
+
+float curveOffset(float progress, bool sidebar) {
+    float p = clamp(progress, 0.0, 1.0) * 20.0;
+    int i = min(19, int(floor(p)));
+    float t = p - float(i);
+    float a = sidebar ? sideCurve[max(0, i - 1)] : oppositeCurve[max(0, i - 1)];
+    float b = sidebar ? sideCurve[i] : oppositeCurve[i];
+    float c = sidebar ? sideCurve[i + 1] : oppositeCurve[i + 1];
+    float d = sidebar ? sideCurve[min(20, i + 2)] : oppositeCurve[min(20, i + 2)];
+    float u = 1.0 - t;
+    return (u*u*u*a + (3.0*t*t*t-6.0*t*t+4.0)*b
+        + (-3.0*t*t*t+3.0*t*t+3.0*t+1.0)*c + t*t*t*d) / 6.0;
+}
+
+float oppositeOffset(float progress) {
+    return curveOffset(progress, false) * oppositePanel.z * 2.0;
+}
+
+float oppositePanelSdf(vec2 pixel) {
+    if (oppositePanel.z > 0.01) {
+        vec2 relative = pixel - oppositePanel.xy;
+        float overshoot = oppositeContour > .01 && oppositePanel.w * 2.0 >= fullSize.y - frameInterior.y - 2.0 ? 32.0 : 0.0;
+        float t = clamp((relative.y + oppositePanel.w) / max(1.0, 2.0 * oppositePanel.w), 0.0, 1.0);
+        float contour = oppositeOffset(t);
+        // Move only the inner edge; the frame side remains continuous.
+        relative.x -= contour;
+        float panel = roundedBoxSdf(relative, oppositePanel.zw + vec2(0.0, overshoot), min(20.0, oppositePanel.z));
+        float distance = panel;
+        if (oppositeLabel.z > .01) {
+            float label = roundedBoxSdf(pixel - oppositeLabel.xy, oppositeLabel.zw, min(10.0, oppositeLabel.z));
+            distance = smoothUnion(distance, label, min(8.0, oppositeLabel.z));
+        }
+        return distance;
+    }
+    return 1e6;
+}
+
+float sideWaveSdf(vec2 pixel) {
+    if (waveDockProgress <= .001 || sideWaveWidth <= .01) return 1e6;
+    float t = (pixel.y - frameInterior.y) / max(1.0, fullSize.y - frameInterior.y);
+    float rise = smoothstep(1.0 - waveDockProgress * 1.12,
+        1.12 - waveDockProgress * 1.12, t);
+    float edge = frameInterior.x + curveOffset(t, true) * sideWaveWidth * waveDockProgress * rise;
+    // Extend through the existing top/bottom strips so their joins have no
+    // extra antialiased boundary. Frame ownership still partitions the passes.
+    return pixel.x - edge;
+}
+
 float frameSdf(vec2 point) {
     vec2 pixel = point + (windowTopLeft + windowBottomRight) * fullSize * 0.5;
     float distance = -roundedBoxSdf(pixel - frameInterior.xy - frameInterior.zw * 0.5,
                          frameInterior.zw * 0.5, frameRadius);
+    if (barMaterial.x > .5 && oppositePanel.z > .01)
+        distance = smoothUnion(distance, oppositePanelSdf(pixel), min(24.0, oppositePanel.z));
+    if (barMaterial.x > .5) distance = min(distance, sideWaveSdf(pixel));
+    // The desktop pass owns the bottom corners, strip and moving contour as
+    // one surface. Upper passes still union their attached panels below.
+    // Partition inside the material, away from its antialiased outer edge.
+    float bottomJoin = frameInterior.y + frameInterior.w - frameRadius - 2.0;
+    if (barMaterial.x > 0.5 && barMaterial.x < 1.5 && pixel.y >= bottomJoin)
+        return 1e6;
+    if (barMaterial.x > 1.5 && bottomPanel.w > 0.0) {
+        float panel = roundedBoxSdf(pixel - bottomPanel.xy, bottomPanel.zw, bottomMetrics.x);
+        distance = smoothUnion(distance, panel, max(0.01, bottomMetrics.y));
+    }
     if (barMaterial.w < 1.0) return distance;
     float base = frameInterior.y + frameInterior.w;
     float scale = max(0.1, fullSize.x / barMaterial.w);
     if (pixel.y < base - 182.0 * scale) return distance;
-    float band = clamp(pixel.x / fullSize.x * 96.0, 0.0, 95.999);
+    float band = clamp(pixel.x / fullSize.x * 95.0, 0.0, 95.0);
     int index = int(floor(band));
     float t = fract(band);
-    float a = barBands[max(0, index - 1)];
-    float b = barBands[index];
-    float c = index + 1 < 96 ? barBands[index + 1] : 0.0;
-    float d = index + 2 < 96 ? barBands[index + 2] : 0.0;
+    float a = balancedBarBand(index - 1);
+    float b = balancedBarBand(index);
+    float c = balancedBarBand(index + 1);
+    float d = balancedBarBand(index + 2);
     // Cubic interpolation gives a continuous tangent between analyzer bands.
     // No quantized height, columns, gaps or grid enter the surface geometry.
     float level = clamp(0.5 * ((2.0*b) + (-a+c)*t
         + (2.0*a-5.0*b+4.0*c-d)*t*t + (-a+3.0*b-3.0*c+d)*t*t*t), 0.0, 1.0);
+    float dock = clamp(waveDockProgress, 0.0, 1.0);
+    float remaining = (1.0 - dock) * (1.0 - smoothstep(1.0 - dock,
+        1.12 - dock, pixel.x / fullSize.x));
+    level *= remaining;
     float slope = 0.5 * ((-a+c) + 2.0*(2.0*a-5.0*b+4.0*c-d)*t
-        + 3.0*(-a+3.0*b-3.0*c+d)*t*t) * 180.0 * 0.9948 * scale * 96.0 / fullSize.x;
+        + 3.0*(-a+3.0*b-3.0*c+d)*t*t) * 180.0 * 0.9948 * scale * 95.0 / fullSize.x * remaining;
     float wave = (base - level * 180.0 * 0.9948 * scale - pixel.y)
         / sqrt(1.0 + slope*slope);
     distance = min(distance, wave);
@@ -540,9 +636,17 @@ void main() {
         vec2 pixel = local + (windowTopLeft + windowBottomRight) * fullSize * 0.5;
         float frameOnly = -roundedBoxSdf(pixel - frameInterior.xy - frameInterior.zw * 0.5,
             frameInterior.zw * 0.5, frameRadius);
-        // The desktop host owns only the wave outside the fixed frame. The
-        // upper hosts keep their full connected shape, including every panel.
-        if (frameOnly <= 0.0) discard;
+        // Keep the bottom frame in the same draw as the wave. Cutting it out
+        // here left the upper pass to blur/tint a second backdrop at the base,
+        // producing a straight seam through an otherwise continuous surface.
+        float bottomJoin = frameInterior.y + frameInterior.w - frameRadius - 2.0;
+        if (pixel.y < bottomJoin && (frameOnly <= 0.0 || oppositePanelSdf(pixel) < 32.0
+                || sideWaveSdf(pixel) < 32.0)) discard;
+        // The editor is above sidebar controls; leave their existing rail
+        // pixels intact. Only the corner inside the desktop and bottom strip
+        // transfer to this pass when Settings are connected.
+        if (bottomPanel.w > 0.0 && pixel.y < frameInterior.y + frameInterior.w
+                && (pixel.x < frameInterior.x || pixel.x > frameInterior.x + frameInterior.z)) discard;
         sdf = frameSdf(local);
     }
     float coverage = 1.0 - smoothstep(-1.25, 1.25, sdf);
@@ -1026,7 +1130,10 @@ bool renderLiquidBackdrop(WP<CTexPassElement> element, const CRegion& damage,
     const auto layer = element ? element->m_data.currentLS.lock() : nullptr;
     const auto cachedFrame = layer && layer->m_monitor
         ? g_frameBackdrops.find(layer->m_monitor->m_name) : g_frameBackdrops.end();
-    const bool desktopWave = layer && layer->m_namespace == SHARED_WIDGETS_NAMESPACE;
+    const std::string monitorName = layer && layer->m_monitor ? layer->m_monitor->m_name : "";
+    const bool attachedSettings = layer && layer->m_namespace == EDITOR_NAMESPACE
+        && topbar && hasBottomSettings(monitorName);
+    const bool desktopWave = layer && (layer->m_namespace == SHARED_WIDGETS_NAMESPACE || attachedSettings);
     const auto backdrop = topbar && !desktopWave && cachedFrame != g_frameBackdrops.end()
         ? cachedFrame->second : g_clearBackdrop;
     if (!element || !backdrop || !backdrop->getTexture() || !ensureLiquidShader() ||
@@ -1125,6 +1232,17 @@ bool renderLiquidBackdrop(WP<CTexPassElement> element, const CRegion& damage,
         if (independentShape->bottomHeight > 0.F)
             drawBox = {surfaceBox.x, panelBox.y, surfaceBox.width, panelBox.height};
     }
+    // The desktop host spans the physical output. Reconstructing its bottom
+    // from the sidebar's rounded normalized y/height can stop a pixel short.
+    // Use the host rectangle so the merged material reaches the last row.
+    if (desktopWave && connectedSidebar) {
+        drawBox = surfaceBox;
+        drawBox.height += 2.0;
+    }
+    // The normalized layer rectangle can round down before the last physical
+    // column. Extend only the drawing/scissor bounds, not the frame geometry.
+    if (connectedSidebar && independentShape->oppositeWidth > 0.F)
+        drawBox.width += 2.0;
     CRegion liquidDamage{connectedTopbar ? railBox : panelBox};
     if (connectedTopbar && panelBox.height > 0.01) {
         const double neck = independentShape->neckHalfWidth * surfaceBox.width;
@@ -1144,6 +1262,13 @@ bool renderLiquidBackdrop(WP<CTexPassElement> element, const CRegion& damage,
             statusBox.y + statusBox.height - railBox.y - railBox.height + 12});
     }
     if (connectedSidebar) {
+        if (independentShape->waveDockProgress > .001 && independentShape->x <= .5F) {
+            // Include the displaced edge in the actual render scissor, not
+            // only in monitor damage; otherwise the new wave is clipped away.
+            const double reach = (independentShape->width * .5F + independentShape->sideWaveWidth * .5F
+                + independentShape->radius) * surfaceBox.width + 4;
+            liquidDamage.add(CBox{surfaceBox.x, surfaceBox.y, reach, surfaceBox.height});
+        }
         liquidDamage.add(CBox{dialBox.x - 12, dialBox.y - 12, dialBox.width + 24, dialBox.height + 24});
         if (sideLabelBox.width > 0)
             liquidDamage.add(CBox{sideLabelBox.x - 12, sideLabelBox.y - 12,
@@ -1151,14 +1276,40 @@ bool renderLiquidBackdrop(WP<CTexPassElement> element, const CRegion& damage,
         const double bottom = independentShape->bottomHeight * surfaceBox.height;
         const auto material = layer && layer->m_monitor
             ? g_desktopBarMaterials.find(layer->m_monitor->m_name) : g_desktopBarMaterials.end();
+        const double bottomCorners = independentShape->radius * surfaceBox.width + 2.0;
         const double peaks = desktopWave && material != g_desktopBarMaterials.end() && material->second.spectrum
-            ? 182.0 * layer->m_monitor->m_scale : 24.0;
+            ? std::max(bottomCorners, 182.0 * layer->m_monitor->m_scale) : bottomCorners;
         liquidDamage.add(CBox{surfaceBox.x, surfaceBox.y + surfaceBox.height - bottom - peaks,
                              surfaceBox.width, bottom + peaks});
         liquidDamage.add(CBox{surfaceBox.x + (independentShape->x > 0.5F
             ? surfaceBox.width - panelBox.width * 0.5 - 28 : 0), surfaceBox.y,
             panelBox.width * 0.5 + 28, 28});
-        liquidDamage.intersect(surfaceBox);
+        if (independentShape->oppositeWidth > 0.F) {
+            const double edgeWidth = (independentShape->oppositeWidth + independentShape->oppositePanel[1] + independentShape->oppositeLabel[1]) * surfaceBox.width + bottomCorners;
+            liquidDamage.add(CBox{surfaceBox.x + (independentShape->x > 0.5F ? 0 : surfaceBox.width - edgeWidth),
+                surfaceBox.y, edgeWidth, surfaceBox.height});
+        }
+        CBox clipBox = surfaceBox;
+        if (independentShape->oppositeWidth > 0.F) {
+            liquidDamage.add(CBox{surfaceBox.x + surfaceBox.width - 2.0,
+                surfaceBox.y, 4.0, surfaceBox.height});
+            clipBox.width += 2.0;
+        }
+        if (desktopWave) {
+            // Cover the physical edge despite fractional pass/scissor bounds.
+            liquidDamage.add(CBox{surfaceBox.x, surfaceBox.y + surfaceBox.height - 2.0,
+                surfaceBox.width, 4.0});
+            clipBox.height += 2.0;
+        }
+        liquidDamage.intersect(clipBox);
+    }
+    if (attachedSettings) {
+        const auto& panel = g_bottomSettings.at(monitorName);
+        const double join = panel.joinSize * surfaceBox.width + 2.0;
+        liquidDamage.add(CBox{surfaceBox.x + panel.x * surfaceBox.width - join,
+            surfaceBox.y + panel.y * surfaceBox.height - 2.0,
+            panel.width * surfaceBox.width + 2.0 * join,
+            (1.0 - panel.y) * surfaceBox.height + 4.0});
     }
     if (hasDial)
         liquidDamage.add(dialBox);
@@ -1206,10 +1357,31 @@ bool renderLiquidBackdrop(WP<CTexPassElement> element, const CRegion& damage,
         nativeBlur ? 1.F : 0.F,
         sharedMaterial && desktopWave && material->second.spectrum && layer && layer->m_monitor
             ? sc<float>(layer->m_monitor->m_size.x / layer->m_monitor->m_scale) : 0.F);
+    if (attachedSettings) {
+        const auto& panel = g_bottomSettings.at(monitorName);
+        const float x = surfaceBox.x + panel.x * surfaceBox.width;
+        const float y = surfaceBox.y + panel.y * surfaceBox.height;
+        const float radius = panel.radius * surfaceBox.width;
+        const float bottom = surfaceBox.y + surfaceBox.height + radius;
+        glUniform4f(glGetUniformLocation(shader->program(), "bottomPanel"),
+            x + panel.width * surfaceBox.width * .5F, (y + bottom) * .5F,
+            panel.width * surfaceBox.width * .5F, (bottom - y) * .5F);
+        glUniform2f(glGetUniformLocation(shader->program(), "bottomMetrics"),
+            radius, panel.joinSize * surfaceBox.width);
+    } else {
+        glUniform4f(glGetUniformLocation(shader->program(), "bottomPanel"), 0, 0, 0, 0);
+        glUniform2f(glGetUniformLocation(shader->program(), "bottomMetrics"), 0, 0);
+    }
     if (sharedMaterial) {
         glUniform4fv(glGetUniformLocation(shader->program(), "barTint"), 1, material->second.tint.data());
         glUniform1fv(glGetUniformLocation(shader->program(), "barBands"), 96, material->second.bands.data());
     }
+    glUniform4f(glGetUniformLocation(shader->program(), "oppositePanel"), 0, 0, 0, 0);
+    glUniform4f(glGetUniformLocation(shader->program(), "oppositeLabel"), 0, 0, 0, 0);
+    glUniform1f(glGetUniformLocation(shader->program(), "oppositeContour"), 0);
+    glUniform1f(glGetUniformLocation(shader->program(), "sideWaveScale"), 0);
+    glUniform1f(glGetUniformLocation(shader->program(), "waveDockProgress"), 0);
+    glUniform1f(glGetUniformLocation(shader->program(), "sideWaveWidth"), 0);
     if ((connectedTopbar || connectedSidebar) && frameShape.active) {
         const auto layer = element->m_data.currentLS.lock();
         const auto found = layer && layer->m_monitor
@@ -1219,11 +1391,37 @@ bool renderLiquidBackdrop(WP<CTexPassElement> element, const CRegion& damage,
         const float side = frameShape.width * textureWidth * 0.5F;
         commonFrameRadius = frameShape.radius * textureWidth;
         const float farEdge = commonFrameRadius * 2.F;
-        const float left = frameShape.x > 0.5F ? -farEdge : side;
-        const float interiorWidth = textureWidth - side + farEdge;
+        const float opposite = frameShape.oppositeWidth > 0.F
+            ? frameShape.oppositeWidth * textureWidth : -farEdge;
+        const float left = frameShape.x > 0.5F ? opposite : side;
+        const float interiorWidth = textureWidth - side - opposite;
         const float bottom = frameShape.bottomHeight * (textureHeight - top);
         glUniform4f(glGetUniformLocation(shader->program(), "frameInterior"),
                     left, top, interiorWidth, textureHeight - top - bottom);
+        if (frameShape.x <= .5F) {
+            glUniform1f(glGetUniformLocation(shader->program(), "waveDockProgress"), frameShape.waveDockProgress);
+            glUniform1f(glGetUniformLocation(shader->program(), "sideWaveWidth"), frameShape.sideWaveWidth * textureWidth);
+            glUniform1fv(glGetUniformLocation(shader->program(), "sideCurve"), 21, frameShape.sideCurve.data());
+        }
+        if (frameShape.oppositePanel[1] > 0.F) {
+            const float reach = frameShape.oppositePanel[1] * textureWidth;
+            const float bodyHeight = frameShape.oppositePanel[2] * (textureHeight - top);
+            const float edge = frameShape.x > 0.5F ? opposite : textureWidth - opposite;
+            glUniform4f(glGetUniformLocation(shader->program(), "oppositePanel"),
+                edge + (frameShape.x > 0.5F ? reach * .5F : -reach * .5F),
+                top + frameShape.oppositePanel[0] * (textureHeight - top) + bodyHeight * .5F,
+                reach * .5F, bodyHeight * .5F);
+            glUniform1f(glGetUniformLocation(shader->program(), "oppositeContour"), frameShape.oppositeContour);
+            glUniform1fv(glGetUniformLocation(shader->program(), "oppositeCurve"), 21, frameShape.oppositeCurve.data());
+            glUniform1f(glGetUniformLocation(shader->program(), "sideWaveScale"),
+                frameShape.x <= .5F ? frameShape.sideWaveScale : 0.F);
+            const float labelWidth = frameShape.oppositeLabel[1] * textureWidth;
+            const float labelHeight = frameShape.oppositeLabel[2] * (textureHeight - top);
+            glUniform4f(glGetUniformLocation(shader->program(), "oppositeLabel"),
+                edge - reach - labelWidth * .5F,
+                top + frameShape.oppositeLabel[0] * (textureHeight - top) + labelHeight * .5F,
+                labelWidth * .5F, labelHeight * .5F);
+        }
     }
     glUniform4f(glGetUniformLocation(shader->program(), "sideLabel"),
         sc<float>(sideLabelBox.x + sideLabelBox.width * 0.5) - drawCenterX,
@@ -1635,12 +1833,25 @@ void damageTopbarMorph(const STopbarMorph& previous,
             for (const auto& shape : {previous, current}) {
                 if (!shape.active) continue;
                 g_pHyprRenderer->damageBox(monitorTopbarBox(monitor, shape));
+                if (shape.sideWaveScale > 0.F && shape.x <= .5F) {
+                    const float peak = *std::max_element(shape.sideCurve.begin(), shape.sideCurve.end());
+                    const double waveWidth = (shape.width * .5F + shape.sideWaveWidth
+                        * peak + shape.radius) * monitor->m_size.x + 4;
+                    g_pHyprRenderer->damageBox(CBox{monitor->m_position.x, monitor->m_position.y,
+                        waveWidth, monitor->m_size.y});
+                }
                 const double edge = (shape.x > 0.5F ? shape.x : shape.x + shape.width) * monitor->m_size.x;
                 const double reach = shape.sideBodyWidth * monitor->m_size.x;
                 if (reach > 0)
                     g_pHyprRenderer->damageBox(CBox{monitor->m_position.x + edge - (shape.x > 0.5F ? reach : 0) - 16,
                         monitor->m_position.y + shape.sideBodyY * monitor->m_size.y - 16,
                         reach + 32, shape.sideBodyHeight * monitor->m_size.y + 80});
+                if (shape.oppositeWidth > 0.F) {
+                    const double edgeWidth = (shape.oppositeWidth + shape.oppositePanel[1] + shape.oppositeLabel[1] + shape.radius) * monitor->m_size.x + 2;
+                    g_pHyprRenderer->damageBox(CBox{monitor->m_position.x
+                        + (shape.x > 0.5F ? 0 : monitor->m_size.x - edgeWidth),
+                        monitor->m_position.y, edgeWidth, monitor->m_size.y});
+                }
                 const double bottom = shape.bottomHeight * monitor->m_size.y;
                 g_pHyprRenderer->damageBox(CBox{monitor->m_position.x,
                     monitor->m_position.y + monitor->m_size.y - bottom - 28,
@@ -1880,6 +2091,28 @@ SDispatchResult unifiedBarShapeDispatcher(std::string arguments) {
     input >> bottomHeight;
     float labelY = 0.F, labelWidth = 0.F, labelHeight = 0.F;
     input >> labelY >> labelWidth >> labelHeight;
+    float oppositeWidth = 0.F;
+    input >> oppositeWidth;
+    shape.oppositeWidth = std::clamp(oppositeWidth, 0.F, 0.05F);
+    std::array<float, 3> oppositePanel{};
+    input >> oppositePanel[0] >> oppositePanel[1] >> oppositePanel[2];
+    shape.oppositePanel = {std::clamp(oppositePanel[0], 0.F, 1.F),
+        std::clamp(oppositePanel[1], 0.F, 0.5F), std::clamp(oppositePanel[2], 0.F, 1.F)};
+    float oppositeContour = 0.F;
+    std::array<float, 3> oppositeLabel{};
+    input >> oppositeContour >> oppositeLabel[0] >> oppositeLabel[1] >> oppositeLabel[2];
+    shape.oppositeContour = std::clamp(oppositeContour, 0.F, 2.F);
+    for (auto& value : shape.oppositeCurve) { float sample = 0.F; input >> sample; value = std::clamp(sample, 0.F, .5F); }
+    float sideWaveScale = 0.F;
+    input >> sideWaveScale;
+    shape.sideWaveScale = std::isfinite(sideWaveScale) ? std::clamp(sideWaveScale, 0.F, 1.F) : 0.F;
+    float dock = 0.F, sideWaveWidth = 0.F;
+    input >> dock >> sideWaveWidth;
+    shape.waveDockProgress = std::isfinite(dock) ? std::clamp(dock, 0.F, 1.F) : 0.F;
+    shape.sideWaveWidth = std::isfinite(sideWaveWidth) ? std::clamp(sideWaveWidth, 0.F, .25F) : 0.F;
+    for (auto& value : shape.sideCurve) { float sample = 0.F; input >> sample; value = std::isfinite(sample) ? std::clamp(sample, 0.F, .5F) : 0.F; }
+    shape.oppositeLabel = {std::clamp(oppositeLabel[0], 0.F, 1.F),
+        std::clamp(oppositeLabel[1], 0.F, 0.25F), std::clamp(oppositeLabel[2], 0.F, 1.F)};
     shape.sideLabelY = std::clamp(labelY, 0.F, 1.F);
     shape.sideLabelWidth = std::clamp(labelWidth, 0.F, 0.5F);
     shape.sideLabelHeight = std::clamp(labelHeight, 0.F, 1.F);
@@ -1936,6 +2169,30 @@ SDispatchResult selectorShapeDispatcher(std::string arguments) {
     if (next.active) g_selectorShapes[monitor] = next;
     else g_selectorShapes.erase(monitor);
     damageTopbarMorph(previous, next);
+    return {};
+}
+
+SDispatchResult settingsConnectedDispatcher(std::string arguments) {
+    std::istringstream input{arguments};
+    std::string monitor;
+    int active = 0;
+    STopbarMorph next;
+    if (!(input >> monitor >> active) || (active != 0 && active != 1))
+        return {.success = false, .error = "expected monitor and active 0 or 1"};
+    if (active) {
+        if (!(input >> next.x >> next.y >> next.width >> next.height >> next.radius >> next.joinSize))
+            return {.success = false, .error = "expected normalized x y width height radius join"};
+        for (const float value : {next.x, next.y, next.width, next.height, next.radius, next.joinSize})
+            if (!std::isfinite(value) || value < 0.F || value > 1.F)
+                return {.success = false, .error = "settings geometry must be finite and within 0..1"};
+        if (next.width <= 0.F || next.height <= 0.F)
+            return {.success = false, .error = "settings dimensions must be positive"};
+        next.active = true;
+        g_bottomSettings[monitor] = next;
+    } else g_bottomSettings.erase(monitor);
+    // Ownership changes include the complete bottom strip, not just the panel.
+    // Called only during geometry/lifecycle changes, never at rest.
+    damageAllMonitors();
     return {};
 }
 
@@ -2319,6 +2576,14 @@ void hkDrawTex(Render::IElementRenderer* renderer, WP<CTexPassElement> element, 
     }
     const auto material = layer->m_monitor
         ? g_desktopBarMaterials.find(layer->m_monitor->m_name) : g_desktopBarMaterials.end();
+    if (layer->m_namespace == EDITOR_NAMESPACE
+            && !hasBottomSettings(layer->m_monitor ? layer->m_monitor->m_name : "")
+            && std::none_of(g_editorShapes.begin(), g_editorShapes.end(),
+                            [](const auto& shape) { return shape.active; })) {
+        // Settings without a liquid shape use the QML compositor blur region.
+        original(renderer, element, damage);
+        return;
+    }
     if (layer->m_namespace == UNIFIED_BAR_NAMESPACE && g_barBlurEnabled
             && material != g_desktopBarMaterials.end() && material->second.mode == 1) {
         // Prepare the normal compositor blur for QML panels outside the native
@@ -2382,7 +2647,10 @@ void hkGLDrawTex(Render::GL::CGLElementRenderer* renderer, WP<CTexPassElement> e
         && layer->m_namespace == UNIFIED_BAR_NAMESPACE;
     const bool rightMenu = layer && layer->m_namespace == RIGHT_MENU_NAMESPACE;
     const bool settings = layer && layer->m_namespace == SETTINGS_NAMESPACE;
-    const bool editor = layer && layer->m_namespace == EDITOR_NAMESPACE;
+    const bool editor = layer && layer->m_namespace == EDITOR_NAMESPACE
+        && (hasBottomSettings(layer->m_monitor ? layer->m_monitor->m_name : "")
+            || std::any_of(g_editorShapes.begin(), g_editorShapes.end(),
+                          [](const auto& shape) { return shape.active; }));
     const bool selector = layer && layer->m_namespace == SELECTOR_NAMESPACE;
     if (selector && (!layer->m_monitor || !g_selectorShapes.contains(layer->m_monitor->m_name))) {
         original(renderer, element, damage);
@@ -2404,7 +2672,8 @@ void hkGLDrawTex(Render::GL::CGLElementRenderer* renderer, WP<CTexPassElement> e
     bool rendered = false;
     if (sharedWidgets) {
         const auto material = g_desktopBarMaterials.find(monitorName);
-        if (material != g_desktopBarMaterials.end() && material->second.spectrum
+        if (material != g_desktopBarMaterials.end()
+                && !hasBottomSettings(monitorName)
                 && unifiedBarShape(monitorName).active)
             rendered = renderLiquidBackdrop(element, damage, true, false,
                 false, &unifiedBarShape(monitorName));
@@ -2433,6 +2702,9 @@ void hkGLDrawTex(Render::GL::CGLElementRenderer* renderer, WP<CTexPassElement> e
             rendered = renderLiquidBackdrop(element, damage, false, false,
                                              false, &found->second, true);
     } else if (editor) {
+        if (hasBottomSettings(monitorName))
+            rendered = renderLiquidBackdrop(element, damage, true, false,
+                false, &unifiedBarShape(monitorName));
         for (const auto& shape : g_editorShapes) {
             if (shape.active)
                 rendered = renderLiquidBackdrop(element, damage, false, false,
@@ -2501,7 +2773,7 @@ std::string status(eHyprCtlOutputFormat format, std::string) {
 
     if (format == FORMAT_JSON)
         return std::format(
-            R"({{"active":true,"abi":"{}","capabilities":["desktop-bar-material","transition","dial","caustics","topbar-connected","bar-blur","widget-blur","liquid-style","wallpaper","topbar-shape","unified-bar-shape","topbar-settle","right-menu-shape","settings-shape","editor-shape","selector-shape","appearance","lock-layout","shared-widgets-shape"],"wallpaperBlur":{:.3f},"liquidStyle":"{}","backdrop":"sharp-framebuffer","hyprlandBlur":{},"barBlur":{{"enabled":{},"source":"hyprland","topbarDraws":{},"sidebarDraws":{},"waveDraws":{}}},"appearance":{{"blur":{:.3f},"contrast":{:.3f},"reflection":{:.3f},"preview":{}}},"desktop":{{"size":{},"passes":{},"draws":{},"noise":{:.3f},"contrast":{:.3f},"brightness":{:.3f},"vibrancy":{:.3f},"vibrancyDarkness":{:.3f}}},"panel":{{"size":{},"passes":{},"draws":{},"refractionDraws":{},"noise":{:.3f},"contrast":{:.3f},"brightness":{:.3f},"vibrancy":{:.3f},"vibrancyDarkness":{:.3f},"refraction":{:.3f},"edgeWidth":{:.3f},"dispersion":{:.3f},"tint":{:.3f}}},"topbar":{{"size":{},"passes":{},"shapes":{},"draws":{},"refractionDraws":{},"noise":{:.3f},"contrast":{:.3f},"brightness":{:.3f},"vibrancy":{:.3f},"vibrancyDarkness":{:.3f}}},"rightMenu":{{"draws":{},"refractionDraws":{}}},"settings":{{"draws":{},"refractionDraws":{}}},"editor":{{"shapes":{},"draws":{},"refractionDraws":{}}},"sharedWidgets":{{"blurEnabled":{},"blurDraws":{},"active":{},"shapes":{},"draws":{},"refractionDraws":{},"caustics":{}}},"transition":{{"progress":{:.3f},"animating":{}}},"caustics":{{"enabled":{},"intensity":{:.3f},"lines":{},"animating":{},"frames":{}}}}})",
+            R"({{"active":true,"abi":"{}","capabilities":["desktop-bar-material","transition","dial","caustics","topbar-connected","bar-blur","widget-blur","liquid-style","wallpaper","topbar-shape","unified-bar-shape","topbar-settle","right-menu-shape","settings-shape","settings-connected","editor-shape","selector-shape","appearance","lock-layout","shared-widgets-shape"],"wallpaperBlur":{:.3f},"liquidStyle":"{}","backdrop":"sharp-framebuffer","hyprlandBlur":{},"barBlur":{{"enabled":{},"source":"hyprland","topbarDraws":{},"sidebarDraws":{},"waveDraws":{}}},"appearance":{{"blur":{:.3f},"contrast":{:.3f},"reflection":{:.3f},"preview":{}}},"desktop":{{"size":{},"passes":{},"draws":{},"noise":{:.3f},"contrast":{:.3f},"brightness":{:.3f},"vibrancy":{:.3f},"vibrancyDarkness":{:.3f}}},"panel":{{"size":{},"passes":{},"draws":{},"refractionDraws":{},"noise":{:.3f},"contrast":{:.3f},"brightness":{:.3f},"vibrancy":{:.3f},"vibrancyDarkness":{:.3f},"refraction":{:.3f},"edgeWidth":{:.3f},"dispersion":{:.3f},"tint":{:.3f}}},"topbar":{{"size":{},"passes":{},"shapes":{},"draws":{},"refractionDraws":{},"noise":{:.3f},"contrast":{:.3f},"brightness":{:.3f},"vibrancy":{:.3f},"vibrancyDarkness":{:.3f}}},"rightMenu":{{"draws":{},"refractionDraws":{}}},"settings":{{"draws":{},"refractionDraws":{}}},"editor":{{"shapes":{},"draws":{},"refractionDraws":{},"connectedSettings":{}}},"sharedWidgets":{{"blurEnabled":{},"blurDraws":{},"active":{},"shapes":{},"draws":{},"refractionDraws":{},"caustics":{}}},"transition":{{"progress":{:.3f},"animating":{}}},"caustics":{{"enabled":{},"intensity":{:.3f},"lines":{},"animating":{},"frames":{}}}}})",
             __hyprland_api_get_client_hash(), g_wallpaperBlur, g_liquidFrosted ? "frosted" : "clear", g_barBlurEnabled, g_barBlurEnabled, g_topbarBlurDraws, g_sidebarBlurDraws, g_waveBlurDraws,
             g_activeAppearance.blur, g_activeAppearance.contrast,
             g_activeAppearance.reflection,
@@ -2517,7 +2789,7 @@ std::string status(eHyprCtlOutputFormat format, std::string) {
             topbarBrightness, topbarVibrancy, topbarVibrancyDarkness,
             g_rightMenuDraws, g_rightMenuRefractionDraws,
             g_settingsDraws, g_settingsRefractionDraws,
-            editorShapeCount, g_editorDraws, g_editorRefractionDraws,
+            editorShapeCount, g_editorDraws, g_editorRefractionDraws, g_bottomSettings.size(),
             g_widgetBlurEnabled, g_widgetBlurDraws,
             g_sharedWidgetShapesActive ? "true" : "false",
             sharedWidgetShapeCount, g_sharedWidgetDraws,
@@ -2665,6 +2937,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         throw std::runtime_error("Velora Shell right menu shape dispatcher could not be registered");
     if (!HyprlandAPI::addDispatcherV2(g_handle, "velora-blur:settings-shape", settingsShapeDispatcher))
         throw std::runtime_error("Velora Shell settings shape dispatcher could not be registered");
+    if (!HyprlandAPI::addDispatcherV2(g_handle, "velora-blur:settings-connected", settingsConnectedDispatcher))
+        throw std::runtime_error("Could not register settings-connected dispatcher");
     if (!HyprlandAPI::addDispatcherV2(g_handle, "velora-blur:editor-shape", editorShapeDispatcher))
         throw std::runtime_error("Velora Shell editor shape dispatcher could not be registered");
     if (!HyprlandAPI::addDispatcherV2(g_handle, "velora-blur:selector-shape", selectorShapeDispatcher))
@@ -2706,6 +2980,8 @@ APICALL EXPORT void PLUGIN_EXIT() {
     g_causticsTimer.reset();
     HyprlandAPI::removeDispatcher(g_handle, "velora-blur:lock-layout");
     HyprlandAPI::removeDispatcher(g_handle, "velora-blur:appearance");
+    HyprlandAPI::removeDispatcher(g_handle, "velora-blur:settings-connected");
+    g_bottomSettings.clear();
     HyprlandAPI::removeDispatcher(g_handle, "velora-blur:editor-shape");
     HyprlandAPI::removeDispatcher(g_handle, "velora-blur:selector-shape");
     HyprlandAPI::removeDispatcher(g_handle, "velora-blur:shared-widgets-shape");

@@ -7,6 +7,7 @@ import Quickshell.Io
 Item {
     id: root
     property bool opened: true
+    property bool reducedMotion: false
     property color surfaceColor: "#24242d"
     readonly property bool interactionHeld: awaitingConfirmation || outputs.popup.visible || modeSelect.popup.visible
     property color ink: "white"
@@ -104,10 +105,30 @@ Item {
                 spacing: 9
                 Text { text: "Monitores"; color: root.ink; font.family: root.uiFont; font.pixelSize: 17; font.weight: Font.DemiBold }
                 Row {
-                    spacing: 5
-                    MonitorButton { text: "Estender"; selected: root.layoutMode === "extend"; onClicked: root.layoutMode = "extend" }
-                    MonitorButton { text: "Espelhar"; selected: root.layoutMode === "mirror"; enabled: root.monitors.length > 1; onClicked: root.layoutMode = "mirror" }
-                    MonitorButton { text: "Só este"; selected: root.layoutMode === "main"; enabled: root.monitors.length > 1; onClicked: root.layoutMode = "main" }
+                    width: parent.width
+                    spacing: 6
+                    Repeater {
+                        model: [
+                            { key: "extend", label: "Estender", detail: "Um espaço de trabalho distribuído entre as telas" },
+                            { key: "mirror", label: "Espelhar", detail: "O mesmo conteúdo nas duas telas" },
+                            { key: "main", label: "Só este", detail: "Usa apenas o monitor selecionado abaixo" }
+                        ]
+                        VeloraSystemChoice {
+                            required property var modelData
+                            objectName: "monitorChoice-" + modelData.key
+                            width: (root.width - 12) / 3
+                            monitorChoice: true
+                            reducedMotion: root.reducedMotion
+                            choice: modelData.key
+                            text: modelData.label
+                            explanation: modelData.detail
+                            ink: root.ink
+                            uiFont: root.uiFont
+                            selected: root.layoutMode === modelData.key
+                            enabled: modelData.key === "extend" || root.monitors.length > 1
+                            onClicked: root.layoutMode = modelData.key
+                        }
+                    }
                 }
                 MonitorSelect {
                     id: outputs
@@ -127,12 +148,17 @@ Item {
                     onActivated: index => root.selectedMode = root.modes[index]
                 }
                 Text { text: "Escala · " + Math.round(root.selectedScale * 100) + "%"; color: root.ink; font.family: root.uiFont; font.pixelSize: 11 }
-                Slider {
+                VeloraMotionSlider {
+                    id: scaleControl
                     objectName: "monitorScale"
                     width: parent.width; height: 30
+                    Accessible.name: "Escala do monitor"
                     from: 0.5; to: 3; stepSize: 0.05
                     value: root.selectedScale
                     onMoved: root.selectedScale = Math.round(value * 20) / 20
+                    ink: root.ink
+                    accent: root.alpha(root.ink, .65)
+                    reducedMotion: root.reducedMotion
                 }
                 Text {
                     width: parent.width

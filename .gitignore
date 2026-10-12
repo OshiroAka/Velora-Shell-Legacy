@@ -49,8 +49,7 @@ backup/
 .DS_Store
 Thumbs.db
 
-# Internal validation and development evidence (keep locally)
-/tests/
+# Local checkpoints and development evidence (keep locally)
 /AGENTS.md
 /CHECKPOINT*.md
 /checkpoints/

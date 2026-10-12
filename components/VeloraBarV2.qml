@@ -15,6 +15,7 @@ Item {
 
     property var theme: null
     property var mediaService: null
+    property bool mediaEnabled: true
     property var audioVisualizer: null
     property var toolsService: null
     property var fanPlusService: null
@@ -100,6 +101,7 @@ Item {
     property int focusIndex: 0
     property string focusTarget: "clock"
     property string activePopupType: ""
+    property bool reducedIconMotion: false
     property bool volumeControlOpen: false
     property bool brightnessControlOpen: false
     property bool batteryControlOpen: false
@@ -1128,7 +1130,7 @@ Item {
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.minimumHeight: root.mediaService ? 148 : 18
+            Layout.minimumHeight: root.mediaEnabled && root.mediaService ? 148 : 18
 
             Column {
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -1144,55 +1146,31 @@ Item {
                     surfaceColor: root.alpha(root.card, 0.58)
                     borderColor: root.alpha(root.ink, 0.16)
                 }
-                VeloraRailMedia {
-    id: railMedia
-    animated: root.theme ? root.theme.motionEnabled : true
-
-    width: Math.min(
-        44,
-        root.width - 4
-    )
-
-    availableHeight: Math.max(
-        0,
-        parent.parent.height
-            - 8
-            - fanIndicator.implicitHeight
-            - (
-                fanIndicator.visible
-                    ? parent.spacing
-                    : 0
-            )
-    )
-
-    visible:
-        availableHeight >= 100
-        && !!root.mediaService
-
-    media: root.mediaService
-    visualizer: root.audioVisualizer
-
-    ink: root.ink
-    surfaceColor: root.card
-    accent: root.pink
-    fontFamily: root.uiFont
-
-    selected:
-        root.mediaMenuOpen
-
-                    onTriggerHoverChanged: inside => {
-                        root.mediaHoverChanged(
-                            inside,
-                            root.itemCenterY(railMedia)
-                        )
-                    }
-
-                    onActivated: {
-                        root.mediaMenuRequested(
-                            root.itemCenterY(railMedia)
-                        )
+                Loader {
+                    id: railMediaLoader
+                    readonly property real availableHeight: Math.max(0,
+                        parent.parent.height - 8 - fanIndicator.implicitHeight
+                        - (fanIndicator.visible ? parent.spacing : 0))
+                    active: root.mediaEnabled && !!root.mediaService && availableHeight >= 100
+                    visible: active
+                    width: Math.min(44, root.width - 4)
+                    height: item ? item.implicitHeight : 0
+                    sourceComponent: VeloraRailMedia {
+                        animated: root.theme ? root.theme.motionEnabled : true
+                        availableHeight: railMediaLoader.availableHeight
+                        media: root.mediaService
+                        visualizer: root.audioVisualizer
+                        ink: root.ink
+                        surfaceColor: root.card
+                        accent: root.pink
+                        fontFamily: root.uiFont
+                        selected: root.mediaMenuOpen
+                        onTriggerHoverChanged: inside => root.mediaHoverChanged(
+                            inside, root.itemCenterY(railMediaLoader))
+                        onActivated: root.mediaMenuRequested(root.itemCenterY(railMediaLoader))
                     }
                 }
+
             }
         }
 
@@ -1544,13 +1522,12 @@ Item {
         signal triggered()
 
         implicitHeight: Math.round(30 * root.uiScale)
-        scale: row.pressed ? 0.96 : (row.hovered ? 1.08 : 1)
-        transformOrigin: Item.Center
-
-        Behavior on scale {
-            enabled: root.theme ? root.theme.motionEnabled : true
-            NumberAnimation { duration: row.scale > 1 ? 110 : 140; easing.type: Easing.OutCubic }
+        VeloraIconMotion {
+            id: iconMotion
+            highlighted: row.hovered || (root.focusMode && root.focusTarget === row.iconName)
+            reducedMotion: root.reducedIconMotion
         }
+
 
         Process {
             id: rowProcess
@@ -1569,6 +1546,8 @@ Item {
         }
 
         VeloraIcon {
+            scale: iconMotion.zoom
+            transform: Translate { y: iconMotion.lift }
             id: toolIcon
 
             anchors {
@@ -1580,7 +1559,7 @@ Item {
             height: Math.round(24 * root.uiScale * root.configuredIconScale)
             iconName: row.iconName
             lineColor: root.ink
-            opacity: Math.max(0.88, root.configuredIconOpacity)
+            opacity: Math.max(0.88, root.configuredIconOpacity) * iconMotion.inkOpacity
             layer.enabled: false
             layer.effect: DropShadow {
                 transparentBorder: true
@@ -1656,13 +1635,12 @@ Item {
         Layout.alignment: Qt.AlignHCenter
         Layout.preferredWidth: Math.round(34 * root.uiScale * root.configuredIconScale)
         Layout.preferredHeight: Math.round(34 * root.uiScale * root.configuredIconScale)
-        scale: button.pressed ? 0.96 : (button.hovered ? 1.08 : 1)
-        transformOrigin: Item.Center
-
-        Behavior on scale {
-            enabled: root.theme ? root.theme.motionEnabled : true
-            NumberAnimation { duration: button.scale > 1 ? 110 : 140; easing.type: Easing.OutCubic }
+        VeloraIconMotion {
+            id: iconMotion
+            highlighted: button.hovered || (root.focusMode && root.focusTarget === button.iconName)
+            reducedMotion: root.reducedIconMotion
         }
+
         radius: Math.round(8 * root.uiScale)
         color: root.alpha(root.ink, selected ? 0.18 : hovered ? 0.13 : 0.07)
         border.width: 1
@@ -1686,16 +1664,20 @@ Item {
         }
 
         VeloraIcon {
+            scale: iconMotion.zoom
+            transform: Translate { y: iconMotion.lift }
             anchors.centerIn: parent
             width: Math.round(26 * root.uiScale * root.configuredIconScale)
             height: Math.round(26 * root.uiScale * root.configuredIconScale)
             visible: button.iconName !== "caffeine" && button.iconName !== "notes"
             iconName: button.iconName
             lineColor: root.ink
-            opacity: Math.max(0.88, root.configuredIconOpacity)
+            opacity: Math.max(0.88, root.configuredIconOpacity) * iconMotion.inkOpacity
         }
 
         Loader {
+            scale: iconMotion.zoom
+            transform: Translate { y: iconMotion.lift }
             anchors.centerIn: parent
             width: Math.round(26 * root.uiScale * root.configuredIconScale)
             height: width
@@ -1763,13 +1745,12 @@ Item {
         Layout.alignment: Qt.AlignHCenter
         Layout.preferredWidth: Math.round(32 * root.uiScale * root.configuredIconScale)
         Layout.preferredHeight: Math.round(32 * root.uiScale * root.configuredIconScale)
-        scale: button.pressed ? 0.96 : (button.hovered ? 1.08 : 1)
-        transformOrigin: Item.Center
-
-        Behavior on scale {
-            enabled: root.theme ? root.theme.motionEnabled : true
-            NumberAnimation { duration: button.scale > 1 ? 110 : 140; easing.type: Easing.OutCubic }
+        VeloraIconMotion {
+            id: iconMotion
+            highlighted: button.hovered || (root.focusMode && root.focusTarget === button.iconName)
+            reducedMotion: root.reducedIconMotion
         }
+
 
         Rectangle {
             anchors.fill: parent
@@ -1788,12 +1769,14 @@ Item {
         }
 
         VeloraIcon {
+            scale: iconMotion.zoom
+            transform: Translate { y: iconMotion.lift }
             anchors.centerIn: parent
             width: Math.round(26 * root.uiScale * root.configuredIconScale)
             height: Math.round(26 * root.uiScale * root.configuredIconScale)
             iconName: button.iconName
             lineColor: root.ink
-            opacity: Math.max(0.88, root.configuredIconOpacity)
+            opacity: Math.max(0.88, root.configuredIconOpacity) * iconMotion.inkOpacity
             value: button.iconName === "battery" ? root.normalizedBatteryLevel() : Math.max(0.08, Math.min(1, root.volume / 100))
             rotation: button.iconRotation
             transformOrigin: Item.Center

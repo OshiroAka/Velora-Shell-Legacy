@@ -1,6 +1,8 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import "../components" as Components
+import "../features/editor/SettingsCatalog.js" as Catalog
 
 Scope {
     id: root
@@ -11,6 +13,45 @@ Scope {
     required property var profileService
     required property var editor
     property var shell: null
+    readonly property var wallpaperService: profileService.wallpaperService || null
+    readonly property var integrations: integrationsLoader.item
+    property string settingsSection: "main"
+    property bool integrationsMounted: false
+    property string integrationError: ""
+    function releaseIntegrations() {
+        // Let Process.onExited drain pending writes before tearing down helpers.
+        Qt.callLater(function() {
+            if (!root.mounted && (!integrationsLoader.item || !integrationsLoader.item.busy))
+                root.integrationsMounted = false
+        })
+    }
+    onMountedChanged: {
+        if (mounted) integrationsMounted = true
+        else releaseIntegrations()
+    }
+    Connections {
+        target: integrationsLoader.item
+        function onBusyChanged() { root.releaseIntegrations() }
+        function onOperationErrorChanged() {
+            if (integrationsLoader.item) root.integrationError = integrationsLoader.item.operationError
+        }
+    }
+    Loader {
+        id: integrationsLoader
+        active: root.integrationsMounted
+        sourceComponent: Components.VeloraSettingsBackend {
+            config: root.config
+            theme: root.shell ? root.shell.unifiedTheme : null
+            composition: root.shell ? root.shell.composition : null
+            active: root.shown && root.mode === "settings"
+            activePage: root.settingsPage === "media" && root.settingsSection === "velyrics"
+                ? "velyrics" : root.settingsPage
+            onLyricsMaskEditorRequested: {
+                root.hide()
+                if (root.shell) root.shell.openLyricsMaskEditor()
+            }
+        }
+    }
     function openLegacySettings() {
         mode = "settings"
         settingsPage = "system"
@@ -29,7 +70,7 @@ Scope {
     property string pendingProfileId: ""
     property string editSpace: "desktop"
     property string mode: "settings"
-    property string settingsPage: "desktop"
+    property string settingsPage: "wallpapers"
     property string pendingGridLayout: "grid2"
     property bool switchingSpace: false
     property int serial: 0
@@ -53,7 +94,7 @@ Scope {
             closePrompt = false
         }
         editSpace = String(space) === "lock" ? "lock" : "desktop"
-        settingsPage = editSpace
+        if (editSpace === "lock") settingsPage = "lock"
         mode = "settings"
         root.editor.setEditSpace(editSpace)
         root.preview.hide()
@@ -96,7 +137,7 @@ Scope {
     }
 
     function setSettingsPage(value) {
-        settingsPage = String(value || "desktop")
+        settingsPage = Catalog.category(String(value || "wallpapers")).id
         return true
     }
 
@@ -492,7 +533,7 @@ Scope {
 
     Timer {
         id: closeTimer
-        interval: root.motion.exit + 80
+        interval: root.mode === "settings" ? root.motion.contentExit + root.motion.closeDuration + 30 : root.motion.exit + 80
         repeat: false
         onTriggered: {
             root.mounted = false
